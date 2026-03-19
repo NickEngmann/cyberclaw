@@ -16,14 +16,49 @@ from ui.terminal import TerminalUI
 
 def check_network_connectivity() -> bool:
     """Check if we already have network connectivity."""
+    # Method 1: default route
     try:
         result = subprocess.run(
             ["ip", "route", "show", "default"],
             capture_output=True, text=True, timeout=5,
         )
-        return bool(result.stdout.strip())
+        if result.stdout.strip():
+            return True
     except Exception:
-        return False
+        pass
+
+    # Method 2: check if wlan0 has an IP
+    try:
+        result = subprocess.run(
+            ["ip", "addr", "show", "wlan0"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if "inet " in result.stdout:
+            return True
+    except Exception:
+        pass
+
+    # Method 3: can we reach the LLM? (shared network namespace)
+    try:
+        import httpx
+        r = httpx.get("http://127.0.0.1:8080/health", timeout=3)
+        if r.status_code == 200:
+            return True
+    except Exception:
+        pass
+
+    # Method 4: can we ping the gateway?
+    try:
+        result = subprocess.run(
+            ["ping", "-c", "1", "-W", "2", "192.168.1.1"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            return True
+    except Exception:
+        pass
+
+    return False
 
 
 def load_config(path: str = "config.yaml") -> dict:
