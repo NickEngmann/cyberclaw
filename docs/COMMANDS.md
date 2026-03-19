@@ -89,3 +89,53 @@ ps -ef | grep llama-cli | grep -v grep | awk '{print $2}' | xargs kill -9
 -e               # Enable escape sequences in prompt
 -p "..."         # The prompt
 ```
+
+## llama-server Management
+
+### Start llama-server (from Android shell, port 9022)
+```bash
+bash /data/local/nhsystem/kalifs/root/nightcrawler/scripts/start-llm.sh
+```
+
+### Start llama-server from a Kali SSH session
+```bash
+ssh -p 9022 shell@127.0.0.1 "bash /data/local/nhsystem/kalifs/root/nightcrawler/scripts/start-llm.sh"
+```
+
+### Check health
+```bash
+curl -s http://127.0.0.1:8080/health
+# Returns: {"status":"ok"}
+```
+
+### Stop llama-server
+```bash
+ssh -p 9022 shell@127.0.0.1 "pkill -f llama-server"
+```
+
+### Auto-start behavior
+- Magisk watchdog starts llama-server 20 min after boot
+- If it crashes, watchdog restarts after 20 min cooldown
+- Health checked every 30s when running
+- Logs: /data/local/tmp/var/log/llama-server.log
+- Watchdog log: /data/local/tmp/var/log/llama-watchdog.log
+
+## WebUI Management
+
+### Start WebUI daemon
+```bash
+/root/nightcrawler/scripts/webui-daemon.sh start
+```
+
+### Access WebUI
+```
+https://kali.taileba694.ts.net:8888
+```
+Self-signed cert — accept the browser warning.
+
+### Stop/restart WebUI
+```bash
+/root/nightcrawler/scripts/webui-daemon.sh stop
+/root/nightcrawler/scripts/webui-daemon.sh restart
+/root/nightcrawler/scripts/webui-daemon.sh status
+```

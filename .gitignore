@@ -7,3 +7,23 @@ models/*.bin
 *.tmp
 __pycache__/
 *.pyc
+
+# Virtual environment
+.venv/
+
+# Mission data (sensitive)
+logs/findings.json
+logs/timeline.jsonl
+logs/commands.jsonl
+logs/creds.enc
+
+# Runtime PIDs
+*.pid
+
+# Captures
+*.cap
+*.hccapx
+*.pcap
+
+# SSL certs (self-signed, regenerate with openssl)
+certs/*.pem

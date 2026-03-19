@@ -1,0 +1,66 @@
+mission:
+  id: "CLIENT-2026-003"
+  scope:
+    networks: ["192.168.0.0/16", "10.0.0.0/8"]
+    excluded_hosts: ["192.168.1.1"]
+    excluded_ports: [502, 503]
+  authorization: "ROE-2026-003.pdf"
+  max_runtime_hours: 8
+  auto_wipe_on_complete: false
+
+model:
+  local:
+    path: "/opt/nightcrawler/models/Qwen3.5-2B-Q8_0.gguf"
+    ctx_size: 4096
+    threads: 4
+    port: 8080
+  fallback:
+    ctx_size: 2048
+    threads: 2
+  thor:
+    endpoint: "http://100.x.x.x:8080/v1"
+    model: "qwen3.5-27b"
+    enabled: true
+
+kali_mcp:
+  package: "mcp-kali-server"
+  port: 5000
+  timeout: 300
+
+scope_proxy:
+  port: 8800
+  upstream: "http://127.0.0.1:5000"
+
+webui:
+  port: 8888
+  # Binds to Tailscale IP by default (not exposed on target network)
+
+stealth:
+  scan_rate_per_min: 50
+  cred_spray_rate_per_min: 10
+  jitter_range_ms: [200, 2000]
+  avoid_ids_signatures: true
+  wifi_deauth:
+    prefer_targeted: true
+    max_deauth_count: 5
+    cooldown_sec: 30
+
+wifi:
+  interface_external: "wlan1"
+  interface_internal: "wlan0"
+  wordlists:
+    - "/usr/share/wordlists/rockyou.txt"
+    - "/opt/nightcrawler/wordlists/custom.txt"
+  max_crack_time_min: 30
+  multi_ssid:
+    enabled: true
+    max_additional_cracks: 2
+
+logging:
+  dir: "/opt/nightcrawler/logs"
+  encrypt_creds: true
+  encryption_key_env: "NC_CRED_KEY"
+
+dry_run:
+  enabled: false
+  scenario: "simulation/scenarios/basic_wpa2.json"

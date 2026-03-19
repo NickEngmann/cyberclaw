@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NIGHTCRAWLER</title>
+    <style>
+        /* No external font imports — works offline/air-gapped */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --green: #00ff41;
+            --green-dim: #003b00;
+            --green-mid: #00aa2a;
+            --red: #ff0040;
+            --yellow: #ffcc00;
+            --cyan: #00e5ff;
+            --bg: #0a0a0a;
+            --bg-panel: #0d1117;
+            --border: #1a3a1a;
+            --text: #c0c0c0;
+            --text-dim: #555;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--green);
+            font-family: 'JetBrains Mono', 'Courier New', monospace;
+            font-size: 13px;
+            overflow-x: hidden;
+            min-height: 100vh;
+        }
+
+        /* Matrix rain canvas */
+        #matrix-bg {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: -1;
+            opacity: 0.06;
+        }
+
+        /* Scanline overlay */
+        body::after {
+            content: '';
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0,0,0,0.1) 2px,
+                rgba(0,0,0,0.1) 4px
+            );
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 10px;
+        }
+
+        /* Banner */
+        .banner {
+            text-align: center;
+            padding: 15px 0 10px;
+            font-size: 11px;
+            line-height: 1.2;
+            color: var(--green);
+            text-shadow: 0 0 10px var(--green-dim);
+            white-space: pre;
+        }
+        .banner .version {
+            font-size: 10px;
+            color: var(--green-mid);
+        }
+
+        /* Status bar */
+        .status-bar {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            padding: 10px;
+            border: 1px solid var(--border);
+            background: var(--bg-panel);
+            margin-bottom: 10px;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 3px 0;
+        }
+        .status-label { color: var(--text-dim); }
+        .status-value { color: var(--green); font-weight: bold; }
+        .status-value.offline { color: var(--red); }
+        .status-value.warning { color: var(--yellow); }
+        .status-value.phase {
+            font-size: 16px;
+            text-shadow: 0 0 15px var(--green);
+        }
+
+        /* Panels grid */
+        .panels {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        @media (max-width: 768px) {
+            .panels { grid-template-columns: 1fr; }
+            .status-bar { grid-template-columns: 1fr; }
+        }
+
+        .panel {
+            border: 1px solid var(--border);
+            background: var(--bg-panel);
+            min-height: 200px;
+            max-height: 400px;
+            display: flex;
+            flex-direction: column;
+        }
+        .panel-header {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+            font-weight: bold;
+            color: var(--green);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            text-shadow: 0 0 5px var(--green-dim);
+        }
+        .panel-header .count {
+            background: var(--green-dim);
+            padding: 2px 8px;
+            border-radius: 2px;
+            font-size: 11px;
+        }
+        .panel-body {
+            padding: 8px 12px;
+            overflow-y: auto;
+            flex: 1;
+            scrollbar-width: thin;
+            scrollbar-color: var(--green-dim) var(--bg);
+        }
+
+        /* Feed entries */
+        .feed-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid #111;
+            display: flex;
+            gap: 8px;
+            animation: fadeIn 0.3s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .feed-ts { color: var(--text-dim); white-space: nowrap; }
+        .feed-type {
+            padding: 0 4px;
+            border-radius: 2px;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+        .feed-type.thought { color: var(--cyan); }
+        .feed-type.command { color: var(--green); font-weight: bold; }
+        .feed-type.result { color: var(--text); }
+        .feed-type.blocked { color: var(--red); }
+        .feed-type.error { color: var(--red); }
+        .feed-type.warning { color: var(--yellow); }
+        .feed-type.phase { color: var(--green); font-weight: bold; font-size: 14px; }
+        .feed-content {
+            color: var(--text);
+            word-break: break-word;
+            flex: 1;
+        }
+        .feed-content.cmd { color: var(--green); }
+
+        /* Hosts table */
+        .host-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid #111;
+        }
+        .host-ip { color: var(--cyan); font-weight: bold; }
+        .host-ports { color: var(--text-dim); font-size: 11px; }
+        .host-info { color: var(--text-dim); font-size: 11px; }
+
+        /* Findings bar */
+        .findings-bar {
+            display: flex;
+            gap: 20px;
+            padding: 10px;
+            border: 1px solid var(--border);
+            background: var(--bg-panel);
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .finding-stat {
+            text-align: center;
+        }
+        .finding-stat .num {
+            font-size: 24px;
+            font-weight: bold;
+            color: var(--green);
+            text-shadow: 0 0 15px var(--green-dim);
+        }
+        .finding-stat .label {
+            font-size: 10px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+        }
+
+        /* Cred/vuln entries */
+        .cred-entry, .vuln-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid #111;
+            font-size: 12px;
+        }
+        .cred-service { color: var(--cyan); }
+        .cred-user { color: var(--yellow); }
+        .vuln-severity.critical { color: var(--red); font-weight: bold; }
+        .vuln-severity.high { color: var(--red); }
+        .vuln-severity.medium { color: var(--yellow); }
+        .vuln-severity.low { color: var(--text-dim); }
+
+        /* Glitch effect for phase */
+        .glitch {
+            animation: glitch 0.3s ease;
+        }
+        @keyframes glitch {
+            0% { transform: translate(2px, -2px); filter: hue-rotate(90deg); }
+            25% { transform: translate(-2px, 2px); }
+            50% { transform: translate(1px, 1px); filter: hue-rotate(0deg); }
+            75% { transform: translate(-1px, -1px); }
+            100% { transform: translate(0, 0); }
+        }
+
+        /* Pulse for active elements */
+        .pulse {
+            animation: pulse 2s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="matrix-bg"></canvas>
+    <div class="container">
+        <!-- Banner -->
+        <div class="banner">
+ ░█▄░█ █ █▀▀ █░█ ▀█▀ █▀▀ █▀█ ▄▀█ █░█░█ █░░ █▀▀ █▀█
+ ░█░▀█ █ █▄█ █▀█ ░█░ █▄▄ █▀▄ █▀█ ▀▄▀▄▀ █▄▄ ██▄ █▀▄
+            <span class="version">v0.1.0 — AUTONOMOUS MOBILE PENTEST AGENT</span>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div>
+                <div class="status-item">
+                    <span class="status-label">PHASE</span>
+                    <span class="status-value phase" id="s-phase">INIT</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">MODE</span>
+                    <span class="status-value" id="s-mode">LOCAL</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">WATCHDOG</span>
+                    <span class="status-value" id="s-watchdog">08:00:00</span>
+                </div>
+            </div>
+            <div>
+                <div class="status-item">
+                    <span class="status-label">UPTIME</span>
+                    <span class="status-value" id="s-uptime">00:00:00</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">THOR</span>
+                    <span class="status-value offline" id="s-thor">OFFLINE</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">CMDS / BLOCKED / ERRS</span>
+                    <span class="status-value" id="s-stats">0 / 0 / 0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Findings Summary -->
+        <div class="findings-bar">
+            <div class="finding-stat">
+                <div class="num" id="f-hosts">0</div>
+                <div class="label">Hosts</div>
+            </div>
+            <div class="finding-stat">
+                <div class="num" id="f-ports">0</div>
+                <div class="label">Ports</div>
+            </div>
+            <div class="finding-stat">
+                <div class="num" id="f-creds">0</div>
+                <div class="label">Creds</div>
+            </div>
+            <div class="finding-stat">
+                <div class="num" id="f-vulns">0</div>
+                <div class="label">Vulns</div>
+            </div>
+        </div>
+
+        <div style="height: 10px;"></div>
+
+        <!-- Main Panels -->
+        <div class="panels">
+            <!-- Live Feed -->
+            <div class="panel" style="grid-column: 1 / -1;">
+                <div class="panel-header">
+                    AGENT FEED <span class="count pulse" id="feed-count">0</span>
+                </div>
+                <div class="panel-body" id="feed-body">
+                    <div class="feed-entry">
+                        <span class="feed-ts">--:--:--</span>
+                        <span class="feed-type thought">SYS</span>
+                        <span class="feed-content">Waiting for agent...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hosts -->
+            <div class="panel">
+                <div class="panel-header">
+                    DISCOVERED HOSTS <span class="count" id="hosts-count">0</span>
+                </div>
+                <div class="panel-body" id="hosts-body">
+                </div>
+            </div>
+
+            <!-- Credentials & Vulns -->
+            <div class="panel">
+                <div class="panel-header">
+                    CREDENTIALS & VULNS <span class="count" id="cv-count">0</span>
+                </div>
+                <div class="panel-body" id="cv-body">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Matrix rain background
+        (function() {
+            const canvas = document.getElementById('matrix-bg');
+            const ctx = canvas.getContext('2d');
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+
+            const chars = 'ﾊﾐﾋｰｳｼﾅﾓﾆｻﾜﾂｵﾘ012345789ABCDEF';
+            const fontSize = 14;
+            const cols = Math.floor(canvas.width / fontSize);
+            const drops = Array(cols).fill(1);
+
+            function draw() {
+                ctx.fillStyle = 'rgba(10, 10, 10, 0.05)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#00ff41';
+                ctx.font = fontSize + 'px monospace';
+
+                for (let i = 0; i < drops.length; i++) {
+                    const char = chars[Math.floor(Math.random() * chars.length)];
+                    ctx.fillText(char, i * fontSize, drops[i] * fontSize);
+                    if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
+                        drops[i] = 0;
+                    }
+                    drops[i]++;
+                }
+            }
+            setInterval(draw, 50);
+
+            window.addEventListener('resize', () => {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            });
+        })();
+
+        // State polling
+        let lastPhase = '';
+
+        async function pollState() {
+            try {
+                const resp = await fetch('/api/state');
+                const state = await resp.json();
+
+                // Update status bar
+                const phaseEl = document.getElementById('s-phase');
+                if (state.phase !== lastPhase) {
+                    phaseEl.classList.add('glitch');
+                    setTimeout(() => phaseEl.classList.remove('glitch'), 300);
+                    lastPhase = state.phase;
+                }
+                phaseEl.textContent = state.phase;
+                document.getElementById('s-mode').textContent = state.mode;
+                document.getElementById('s-uptime').textContent = state.uptime;
+                document.getElementById('s-watchdog').textContent = state.watchdog;
+
+                const thorEl = document.getElementById('s-thor');
+                thorEl.textContent = state.thor_online ? 'ONLINE' : 'OFFLINE';
+                thorEl.className = 'status-value ' + (state.thor_online ? '' : 'offline');
+
+                document.getElementById('s-stats').textContent =
+                    `${state.commands_total} / ${state.commands_blocked} / ${state.errors}`;
+
+                // Update findings
+                const f = state.findings || {};
+                document.getElementById('f-hosts').textContent = f.hosts || 0;
+                document.getElementById('f-ports').textContent = f.ports || 0;
+                document.getElementById('f-creds').textContent = f.creds || 0;
+                document.getElementById('f-vulns').textContent = f.vulns || 0;
+
+                // Update feed
+                const feedBody = document.getElementById('feed-body');
+                const feed = state.feed || [];
+                document.getElementById('feed-count').textContent = feed.length;
+
+                // Only re-render if new entries
+                if (feed.length > feedBody.children.length || feedBody.children.length === 1) {
+                    const startIdx = Math.max(0, feed.length - 50);
+                    feedBody.innerHTML = '';
+                    for (let i = startIdx; i < feed.length; i++) {
+                        feedBody.appendChild(createFeedEntry(feed[i]));
+                    }
+                    feedBody.scrollTop = feedBody.scrollHeight;
+                }
+
+                // Update hosts
+                const hosts = state.hosts || [];
+                const hostsBody = document.getElementById('hosts-body');
+                document.getElementById('hosts-count').textContent = hosts.length;
+                hostsBody.innerHTML = '';
+                for (const h of hosts) {
+                    const div = document.createElement('div');
+                    div.className = 'host-entry';
+                    div.innerHTML = `<span class="host-ip">${esc(h.ip)}</span>` +
+                        (h.ports ? `<br><span class="host-ports">Ports: ${esc(h.ports.join(', '))}</span>` : '') +
+                        (h.info ? `<br><span class="host-info">${esc(h.info)}</span>` : '');
+                    hostsBody.appendChild(div);
+                }
+
+                // Update creds & vulns
+                const creds = state.creds || [];
+                const vulns = state.vulns || [];
+                const cvBody = document.getElementById('cv-body');
+                document.getElementById('cv-count').textContent = creds.length + vulns.length;
+                cvBody.innerHTML = '';
+                for (const c of creds) {
+                    const div = document.createElement('div');
+                    div.className = 'cred-entry';
+                    div.innerHTML = `<span class="cred-service">[${esc(c.service)}]</span> ` +
+                        `<span class="cred-user">${esc(c.username)}</span>:****` +
+                        (c.host ? ` @ ${esc(c.host)}` : '');
+                    cvBody.appendChild(div);
+                }
+                for (const v of vulns) {
+                    const div = document.createElement('div');
+                    div.className = 'vuln-entry';
+                    div.innerHTML = `<span class="vuln-severity ${esc(v.severity)}">[${esc(v.severity.toUpperCase())}]</span> ` +
+                        `${esc(v.host)} — ${esc(v.vuln)}`;
+                    cvBody.appendChild(div);
+                }
+
+            } catch (e) {
+                console.error('Poll error:', e);
+            }
+        }
+
+        function createFeedEntry(entry) {
+            const div = document.createElement('div');
+            div.className = 'feed-entry';
+            const contentClass = entry.type === 'command' ? 'feed-content cmd' : 'feed-content';
+            div.innerHTML = `<span class="feed-ts">${esc(entry.ts)}</span>` +
+                `<span class="feed-type ${esc(entry.type)}">${esc(entry.type.toUpperCase())}</span>` +
+                `<span class="${contentClass}">${esc(entry.content)}</span>`;
+            return div;
+        }
+
+        function esc(s) {
+            if (s == null) return '';
+            const div = document.createElement('div');
+            div.textContent = String(s);
+            return div.innerHTML;
+        }
+
+        // Poll every second
+        setInterval(pollState, 1000);
+        pollState();
+    </script>
+</body>
+</html>
