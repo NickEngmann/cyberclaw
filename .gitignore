@@ -27,3 +27,9 @@ logs/creds.enc
 
 # SSL certs (self-signed, regenerate with openssl)
 certs/*.pem
+
+# Finetuning log (runtime data)
+nightcrawler-finetuning-logs.md
+
+# Health logs
+logs/health.log

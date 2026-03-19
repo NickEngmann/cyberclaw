@@ -491,9 +491,69 @@
             return div.innerHTML;
         }
 
-        // Poll every second
-        setInterval(pollState, 1000);
+        // Poll findings from disk every 5s (catches data even if agent crashes)
+        async function pollFindings() {
+            try {
+                const resp = await fetch('/api/findings');
+                const data = await resp.json();
+
+                // Update counters from disk data
+                document.getElementById('f-hosts').textContent = data.live_hosts || 0;
+                document.getElementById('f-creds').textContent = data.credentials || 0;
+                document.getElementById('f-vulns').textContent = data.vulnerabilities || 0;
+
+                // Count total ports across hosts
+                let totalPorts = 0;
+                const hosts = data.hosts || [];
+                for (const h of hosts) totalPorts += (h.ports || []).length;
+                document.getElementById('f-ports').textContent = totalPorts;
+
+                // Update hosts panel from disk
+                const hostsBody = document.getElementById('hosts-body');
+                document.getElementById('hosts-count').textContent = hosts.length;
+                if (hosts.length > 0) {
+                    hostsBody.innerHTML = '';
+                    for (const h of hosts) {
+                        const div = document.createElement('div');
+                        div.className = 'host-entry';
+                        div.innerHTML = `<span class="host-ip">${esc(h.ip)}</span>` +
+                            (h.ports && h.ports.length ? `<br><span class="host-ports">Ports: ${esc(h.ports.join(', '))}</span>` : '') +
+                            (h.info ? `<br><span class="host-info">${esc(h.info)}</span>` : '');
+                        hostsBody.appendChild(div);
+                    }
+                }
+
+                // Update creds & vulns from disk
+                const creds = data.creds || [];
+                const vulns = data.vulns || [];
+                if (creds.length + vulns.length > 0) {
+                    const cvBody = document.getElementById('cv-body');
+                    document.getElementById('cv-count').textContent = creds.length + vulns.length;
+                    cvBody.innerHTML = '';
+                    for (const c of creds) {
+                        const div = document.createElement('div');
+                        div.className = 'cred-entry';
+                        div.innerHTML = `<span class="cred-service">[${esc(c.service)}]</span> ` +
+                            `<span class="cred-user">${esc(c.username)}</span>:****` +
+                            (c.host ? ` @ ${esc(c.host)}` : '');
+                        cvBody.appendChild(div);
+                    }
+                    for (const v of vulns) {
+                        const div = document.createElement('div');
+                        div.className = 'vuln-entry';
+                        div.innerHTML = `<span class="vuln-severity ${esc(v.severity)}">[${esc(v.severity.toUpperCase())}]</span> ` +
+                            `${esc(v.host)} — ${esc(v.vuln)}`;
+                        cvBody.appendChild(div);
+                    }
+                }
+            } catch (e) { /* ignore */ }
+        }
+
+        // Poll state every 2s, findings from disk every 5s
+        setInterval(pollState, 2000);
+        setInterval(pollFindings, 5000);
         pollState();
+        pollFindings();
     </script>
 </body>
 </html>

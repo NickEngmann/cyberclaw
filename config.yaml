@@ -1,11 +1,11 @@
 mission:
   id: "CLIENT-2026-003"
   scope:
-    networks: ["192.168.0.0/16", "10.0.0.0/8"]
-    excluded_hosts: ["192.168.1.1"]
+    networks: ["192.168.1.0/24"]
+    excluded_hosts: ["192.168.1.1", "192.168.1.53"]
     excluded_ports: [502, 503]
   authorization: "ROE-2026-003.pdf"
-  max_runtime_hours: 8
+  max_runtime_hours: 36
   auto_wipe_on_complete: false
 
 model:
@@ -57,7 +57,7 @@ wifi:
     max_additional_cracks: 2
 
 logging:
-  dir: "/opt/nightcrawler/logs"
+  dir: "/root/nightcrawler/logs"
   encrypt_creds: true
   encryption_key_env: "NC_CRED_KEY"
 
