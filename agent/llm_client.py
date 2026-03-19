@@ -9,7 +9,9 @@ class LLMClient:
     """Talks to llama.cpp locally, falls back to Thor when available."""
 
     def __init__(self, config: dict):
-        self.local_url = f"http://127.0.0.1:{config['local']['port']}/v1"
+        self.local_port = config["local"]["port"]
+        self.local_url = f"http://127.0.0.1:{self.local_port}/v1"
+        self.local_health_url = f"http://127.0.0.1:{self.local_port}/health"
         self.local_ctx = config["local"]["ctx_size"]
         self.fallback_ctx = config.get("fallback", {}).get("ctx_size", 2048)
 
@@ -39,9 +41,8 @@ class LLMClient:
                     model: str = None) -> str:
         payload = {
             "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": 512,
-            "stop": ["COMMAND:", "\n\n\n"],
+            "temperature": 0.4,
+            "max_tokens": 200,
         }
         if model:
             payload["model"] = model
@@ -50,7 +51,11 @@ class LLMClient:
             f"{base_url}/chat/completions",
             json=payload,
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            error_text = resp.text[:500]
+            raise RuntimeError(
+                f"LLM returned {resp.status_code}: {error_text}"
+            )
         data = resp.json()
         return data["choices"][0]["message"]["content"]
 
@@ -58,10 +63,7 @@ class LLMClient:
         """Check which backends are reachable."""
         status = {"local": False, "thor": False}
         try:
-            r = await self._client.get(
-                f"http://127.0.0.1:{self.local_url.split(':')[2].split('/')[0]}/health",
-                timeout=5,
-            )
+            r = await self._client.get(self.local_health_url, timeout=5)
             status["local"] = r.status_code == 200
         except Exception:
             pass
