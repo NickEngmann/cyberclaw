@@ -88,6 +88,7 @@ class MissionLog:
 
     def _auto_extract(self, command: str, result: dict):
         """Try to auto-extract findings from command output."""
+        import re
         output = result.get("output", "")
         status = result.get("status", "")
 
@@ -95,14 +96,30 @@ class MissionLog:
         if "wpa_supplicant" in command and status == "success":
             self.set_finding("wifi_connected", True)
 
-        # Detect nmap host discoveries (simple heuristic)
-        if "nmap" in command and "open" in output:
-            import re
-            hosts = re.findall(
-                r'Nmap scan report for (\S+)', output
-            )
-            for h in hosts:
-                self.add_host(h)
+        # Detect nmap host discoveries with ports
+        if "nmap" in command and ("open" in output or "Host is up" in output):
+            # Parse per-host blocks
+            host_blocks = re.split(r'Nmap scan report for ', output)
+            for block in host_blocks[1:]:  # skip preamble
+                lines = block.strip().split("\n")
+                ip_match = re.match(r'(\d+\.\d+\.\d+\.\d+)', lines[0])
+                if not ip_match:
+                    continue
+                ip = ip_match.group(1)
+                # Extract open ports
+                ports = []
+                info_parts = []
+                for line in lines[1:]:
+                    port_match = re.match(r'(\d+)/tcp\s+open\s+(\S+)', line)
+                    if port_match:
+                        ports.append(int(port_match.group(1)))
+                        info_parts.append(f"{port_match.group(1)}/{port_match.group(2)}")
+                    # Extract MAC/device info
+                    mac_match = re.match(r'MAC Address:\s+(\S+)\s+\((.+?)\)', line)
+                    if mac_match:
+                        info_parts.append(f"MAC:{mac_match.group(1)} ({mac_match.group(2)})")
+                info = ", ".join(info_parts) if info_parts else ""
+                self.add_host(ip, ports=ports, info=info)
 
     def _save_findings(self):
         with open(self.findings_file, "w") as f:
