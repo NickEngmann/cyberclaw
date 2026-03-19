@@ -1,92 +1,137 @@
-# Cyberclaw - Local LLM on Kali NetHunter (Adreno 650 GPU)
+# Cyberclaw - Local LLM Inference on Android (Adreno 650 GPU)
 
-## Quick Start - GPU Inference (OpenCL)
+GPU-accelerated local LLM inference on a rooted Android phone using OpenCL.
+
+## Hardware
+- **Phone**: OnePlus 8 (Snapdragon 865)
+- **GPU**: Qualcomm Adreno 650 (OpenCL 2.0)
+- **RAM**: 12GB (shared CPU/GPU)
+- **OS**: Android 12 (Nameless AOSP) + Kali NetHunter chroot
+
+## Performance
+
+| Model | Quant | GPU Prompt | GPU Generation | vs CPU |
+|-------|-------|------------|----------------|--------|
+| **Qwen3.5-0.8B** | Q8_0 | 30.5 t/s | **6.3 t/s** | +62% |
+| **Qwen3.5-2B** | Q8_0 | 23.3 t/s | **4.8 t/s** | +45% |
+| **Qwen3.5-4B** | Q4_0 | 10.1 t/s | **2.0 t/s** | GPU only |
+
+*Generation = tokens per second when the model is "talking back." 4.8 t/s ≈ 4-5 words/sec.*
+
+## How It Works
+
+1. **llama.cpp** compiled in Termux with Qualcomm's Adreno-optimized OpenCL kernels
+2. **Qualcomm vendor OpenCL driver** (v819.2, E031.50) installed via Magisk module
+3. Patches applied for Adreno 650 CL2.0 device compatibility (see `patches/`)
+4. Models run entirely on the mobile GPU via OpenCL compute
+
+## Quick Start
+
 ```bash
-# From Android root shell (ssh -p 9022 shell@192.168.1.53):
-TERMUX_HOME=/data/data/com.termux/files/home
-KERNELS=$TERMUX_HOME/llama.cpp/ggml/src/ggml-opencl/kernels
-CLI=$TERMUX_HOME/llama.cpp/build-fast/bin/llama-cli
+# SSH into the phone
+ssh -p 9022 shell@<phone-ip>
 
+# Run 2B model on GPU (best quality/speed balance)
+TERMUX_HOME=/data/data/com.termux/files/home
 su 10393 -c "export LD_LIBRARY_PATH=/vendor/lib64; \
   export GGML_OPENCL_PLATFORM=0; export GGML_OPENCL_DEVICE=0; \
-  cd $KERNELS; \
-  $CLI -m $TERMUX_HOME/models/Qwen3.5-0.8B-Q8_0.gguf \
-  -ngl 99 -c 512 -n 100 -no-cnv \
-  -p 'Your prompt here'"
-```
-First run takes ~3 min for kernel JIT. Subsequent runs are fast.
-
-## Quick Start - CPU Inference (ollama)
-```bash
-# Enter Kali chroot first:
-/data/data/com.offsec.nhterm/files/usr/bin_aarch64/kali
-# Then:
-export TMPDIR=/tmp OLLAMA_VULKAN=0 OLLAMA_KEEP_ALIVE=1m
-ollama serve &
-ollama run qwen3.5:2b "Your prompt"
-ollama stop qwen3.5:2b  # ALWAYS stop when done
+  cd $TERMUX_HOME/llama.cpp/ggml/src/ggml-opencl/kernels; \
+  $TERMUX_HOME/llama.cpp/build-fast/bin/llama-cli \
+  -m $TERMUX_HOME/models/Qwen3.5-2B-Q8_0.gguf \
+  -ngl 99 -c 512 -n 200 -no-cnv -p 'Your prompt'"
 ```
 
-## After Reboot Checklist
-1. SSH should auto-start (Magisk module)
-2. Re-mount /vendor in Kali chroot if needed:
-   ```bash
-   # From Android root shell:
-   mount --bind /vendor /data/local/nhsystem/kalifs/vendor
-   ```
-3. GPU inference (Termux OpenCL) works immediately - no remount needed
+See `docs/COMMANDS.md` for all model commands.
 
-## Performance Benchmarks (v819.2 driver, E031.50)
+## Setup Requirements
 
-| Model | Quant | Backend | Prompt | Generation |
-|-------|-------|---------|--------|------------|
-| **Qwen3.5-0.8B** | Q8_0 | **OpenCL GPU** | **30.5 t/s** | **6.3 t/s** |
-| Qwen3.5-0.8B | Q8_0 | CPU (llama.cpp) | 21.9 t/s | 3.9 t/s |
-| Qwen3.5-2B | Q4_K_M | OpenCL GPU | 3.9 t/s | 1.8 t/s |
-| Qwen3.5-2B | Q8_0 | CPU (ollama) | 18.4 t/s | 3.3 t/s |
+### Magisk Modules
+| Module | Purpose | Source |
+|--------|---------|--------|
+| openssh | SSH access (ports 9022 + 22) | Magisk repo |
+| adreno-650_819v2 | Updated GPU driver | [XDA Forums](https://xdaforums.com/t/4739196/) |
+| nethunter | Kali Linux chroot | NetHunter installer |
 
-**Best for 0.8B**: OpenCL GPU (6.3 t/s gen, 62% faster than CPU)
-**Best for 2B**: CPU via ollama (3.3 t/s gen, 74% faster than GPU)
+### Software Stack
+- **Termux**: clang, cmake, ninja, git, python, shaderc, opencl-headers
+- **Kali chroot**: ollama (CPU inference), Mesa Turnip (Vulkan/KGSL)
+- **llama.cpp**: Custom build with OpenCL patches for Adreno 650
+
+### Key Insight: Quantization Matters
+- **Q8_0**: Fastest on GPU for models that fit in memory (< ~2GB)
+- **Q4_0**: Required for larger models (4B). Adreno kernels optimized for Q4_0 blocks
+- **Q4_K_M**: AVOID on GPU - mixed quantization falls back to slow generic kernels (10x slower)
 
 ## Architecture
 
-### GPU Path (OpenCL via Termux)
-- llama.cpp compiled in Termux (bionic) against vendor `/vendor/lib64/libOpenCL.so`
-- Adreno 650 driver v819.2 (E031.50) installed via Magisk module
-- Patched for CL2.0 device on CL3.0 platform
-- Must run from kernel source dir for `.cl` file loading
+```
+┌─────────────────────────────────────────────┐
+│ Android (Bionic libc)                       │
+│                                             │
+│  Termux (OpenCL GPU inference)              │
+│  ├── llama.cpp/build-fast/bin/llama-cli     │
+│  ├── links to /vendor/lib64/libOpenCL.so    │
+│  └── Adreno-optimized CL kernels           │
+│                                             │
+│  /vendor/lib64/ (Qualcomm v819.2 driver)    │
+│  └── libOpenCL.so, libgsl.so, libCB.so     │
+│                                             │
+├─────────────────────────────────────────────┤
+│ Kali NetHunter Chroot (glibc)              │
+│  ├── ollama (CPU inference)                 │
+│  ├── Mesa Turnip (Vulkan, limited use)      │
+│  └── /root/cyberclaw/ (this repo)           │
+├─────────────────────────────────────────────┤
+│ Kernel: KGSL (/dev/kgsl-3d0)              │
+│ Hardware: Adreno 650 GPU                    │
+└─────────────────────────────────────────────┘
+```
 
-### CPU Path (Kali chroot)
-- ollama v0.18.1 for easy model management
-- llama.cpp Vulkan build (CPU-only, ngl=0) for raw performance
+**Why Termux?** The vendor OpenCL driver is Android/bionic-linked.
+Kali's glibc can't load it. Termux uses bionic natively.
 
-### Why not Vulkan?
-- Vendor Adreno Vulkan = v1.1 only (llama.cpp needs 1.2)
-- Mesa Turnip Vulkan = crashes with DeviceLostError during inference
-- OpenCL is the only working GPU path on this device
+**Why not Vulkan?** Vendor Vulkan is 1.1 (llama.cpp needs 1.2).
+Mesa Turnip crashes with DeviceLostError during inference.
 
-## Models
-| Model | File | Size | Location |
-|-------|------|------|----------|
-| Qwen3.5-0.8B Q4_0 | Qwen3.5-0.8B-Q4_0.gguf | 484MB | Kali + Termux |
-| Qwen3.5-0.8B Q8_0 | Qwen3.5-0.8B-Q8_0.gguf | 775MB | Kali + Termux |
-| Qwen3.5-2B Q4_K_M | Qwen3.5-2B-Q4_K_M.gguf | 1.2GB | Kali + Termux |
+## The Journey (E031.37 → E031.50)
+
+| Stage | 0.8B Gen | 2B Gen |
+|-------|----------|--------|
+| CPU only (ollama) | 2.2 t/s | 3.3 t/s |
+| Vulkan (Mesa Turnip) | 2.1 t/s | crashed |
+| OpenCL generic + old driver | 3.6 t/s | 0.2 t/s |
+| OpenCL generic + v819 driver | 4.6 t/s | 1.8 t/s |
+| **OpenCL Adreno + v819 driver** | **6.3 t/s** | **4.8 t/s** |
+
+## Files
+
+```
+cyberclaw/
+├── CLAUDE.md                    # Claude Code quick reference
+├── docs/
+│   ├── COMMANDS.md              # Copy-paste inference commands
+│   ├── INSTALL.sh               # Reproducible setup script
+│   └── README.md                # This file
+├── patches/
+│   └── llama-cpp-opencl-adreno650.patch
+├── backups/
+│   ├── magisk-openssh/          # SSH service configs
+│   ├── magisk-adreno/           # GPU driver module info
+│   └── kali-env/                # Kali environment config
+└── models/                      # .gitignored (too large)
+    ├── Qwen3.5-0.8B-Q8_0.gguf
+    ├── Qwen3.5-2B-Q8_0.gguf
+    └── Qwen3.5-4B-Q4_0.gguf
+```
+
+## After Reboot
+Everything persists. No recompilation needed.
+1. SSH auto-starts on ports 9022 and 22
+2. `/vendor` auto-mounted in Kali chroot
+3. First GPU inference: ~3 min kernel JIT (then cached)
 
 ## Memory Safety
-- **Always** `ollama stop <model>` or kill llama-cli when done
-- Before large models: `am kill-all && echo 3 > /proc/sys/vm/drop_caches`
-- **4B+ models WILL crash the phone** (OOM on shared memory)
-- Check available: `cat /proc/meminfo | grep MemAvail` (need >4GB)
-
-## Magisk Modules
-| Module | Purpose |
-|--------|---------|
-| openssh (v9.9p2) | Persistent SSH on port 9022 |
-| adreno-650_819v2 | Updated GPU driver (E031.50) |
-| nethunter (v1.4.0) | Kali chroot + tools |
-
-## Known Issues & Future Work
-- Q4_0 on GPU crashes (SOA buffer alignment bug in llama.cpp)
-- OpenCL Adreno-optimized kernels available but need 30+ min JIT
-- Embedded kernel build takes 60+ min JIT (use non-embedded instead)
-- Could try MLC LLM for potentially better Adreno OpenCL optimization
+- Free RAM before big models: `am kill-all && echo 3 > /proc/sys/vm/drop_caches`
+- Always kill llama-cli when done
+- 4B Q8_0 (4.2GB) won't load - exceeds 1GB per-allocation limit
+- 9B+ models will OOM the phone

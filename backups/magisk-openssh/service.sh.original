@@ -1,0 +1,33 @@
+
+TRACE_FILE="/data/local/tmp/start_sshd.trace.log"
+if [ 0 = 1 -o -r /data/local/tmp/debug ] ; then
+  echo  "Writing all messages from $0 to the log file ${TRACE_FILE}"
+  exec 1>${TRACE_FILE} 2>&1
+  set -x
+fi
+
+LOGFILE="/data/local/tmp/var/log/sshd.log"
+
+PARAMETER_FILE="/data/local/tmp/home/.ssh/sshd_parameter"
+
+START_SEMAPHOR="/data/local/tmp/home/start_sshd"
+
+SSHD_USER="shell"
+
+CUR_SSHD_PARAMETER=""
+
+if [ -r ${START_SEMAPHOR} ] ; then
+	echo "Starting sshd ..."
+
+	if [ -r "${PARAMETER_FILE}" ] ; then
+		CUR_SSHD_PARAMETER="${CUR_SSHD_PARAMETER} $( egrep -v "^#|^$" "${PARAMETER_FILE}" | tr "\n" )"
+	fi
+
+	if [ -r ${LOGFILE} ] ; then
+		CUR_SSHD_PARAMETER="${CUR_SSHD_PARAMETER} -E ${LOGFILE}"
+		chown ${SSHD_USER} ${LOGFILE}
+	fi
+	su - ${SSHD_USER} -c /system/bin/sshd ${CUR_SSHD_PARAMETER}
+fi
+
+

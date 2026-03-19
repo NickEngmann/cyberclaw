@@ -1,0 +1,7 @@
+id=openssh
+name=openssh
+version=9.9p2.v1.1.0
+versionCode=3
+author=Bernd.Schemmer@gmx.de
+description=openssh with SELinux support for Android
+
