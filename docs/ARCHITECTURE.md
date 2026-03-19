@@ -66,7 +66,9 @@ The agent can operate fully standalone on local inference. If an NVIDIA AGX Thor
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │  ANDROID PERSISTENCE: wake lock, Doze disabled, renice -10   │  │
+│  │  ANDROID PERSISTENCE LAYER (Magisk service.sh)              │  │
+│  │  +10s: SSH (9022) · +12s: /vendor mount · +14s: Kali SSH    │  │
+│  │  +20m: llama-server watchdog (30s health, 20m crash cool)   │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
                               │
@@ -171,9 +173,12 @@ Kali Linux (chroot)
 ├── scripts/
 │   ├── launch.sh                    # tmux session launcher (4 windows)
 │   ├── start.sh                     # Boot all services + agent
+│   ├── start-llm.sh                 # Start llama-server on GPU (Android side)
 │   ├── stop.sh                      # Graceful shutdown
 │   ├── wipe.sh                      # Secure delete all mission data
-│   └── install.sh                   # Install to /opt/nightcrawler
+│   ├── install.sh                   # Install to /opt/nightcrawler
+│   └── webui-daemon.sh              # WebUI daemon {start|stop|status|restart}
+├── certs/                           # (gitignored) self-signed SSL certs
 ├── logs/                            # (gitignored) mission data
 │   ├── findings.json
 │   ├── timeline.jsonl
@@ -185,8 +190,9 @@ Kali Linux (chroot)
 ├── backups/                         # Magisk module configs
 └── docs/
     ├── ARCHITECTURE.md              # This file
-    ├── COMMANDS.md                  # GPU inference commands
-    └── README.md                    # Project README
+    ├── COMMANDS.md                  # GPU inference + service management
+    ├── README-GPU.md                # GPU/OpenCL setup reference
+    └── INSTALL-GPU.sh               # GPU/Termux build script
 ```
 
 ---
@@ -204,9 +210,29 @@ The system prompt is injected with phase context, scope constraints, and mission
 
 ---
 
+## LLM Backend (llama-server)
+
+llama-server runs on the **Android side as root** (not in the Kali chroot, not as Termux user). It uses the Adreno 650 GPU via OpenCL with Qualcomm's vendor driver. The Kali chroot shares the network namespace with Android, so the agent reaches it at `http://127.0.0.1:8080`.
+
+**Why root, not Termux user?** The Termux UID (10393) can't bind network ports when invoked via `su`. Running as root with Termux's `LD_LIBRARY_PATH` works.
+
+**Auto-start:** Magisk watchdog starts llama-server 20 min after boot. If it crashes, 20 min cooldown before restart. Health checked every 30s.
+
+**Manual start:** `ssh -p 9022 shell@127.0.0.1 "bash /data/local/nhsystem/kalifs/root/nightcrawler/scripts/start-llm.sh"`
+
+**Logs:** `/data/local/tmp/var/log/llama-server.log`, `/data/local/tmp/var/log/llama-watchdog.log`
+
+---
+
 ## Web UI
 
-Hacker terminal aesthetic dashboard at `:8888`, bound to Tailscale IP only (not exposed on target network). Shows:
+Hacker terminal aesthetic dashboard at `:8888`, served over HTTPS with a self-signed cert. Bound to Tailscale IP only (not exposed on target network).
+
+**URL:** `https://kali.taileba694.ts.net:8888` (accept self-signed cert warning)
+
+**Management:** `scripts/webui-daemon.sh {start|stop|status|restart}`
+
+Shows:
 
 - Phase, mode, uptime, watchdog timer
 - Live agent feed (thoughts, commands, results, blocked actions)
