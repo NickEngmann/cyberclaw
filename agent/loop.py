@@ -361,9 +361,10 @@ class AgentLoop:
             # Strip markdown formatting: bold (**), code fences, backticks
             cmd = re.sub(r'^```\w*\s*', '', cmd)
             cmd = re.sub(r'\s*```$', '', cmd)
-            cmd = cmd.strip("`").strip("*").strip()
-            # Remove any remaining leading/trailing punctuation
-            cmd = cmd.lstrip("#>$ ").strip()
+            # Aggressively strip ALL markdown/formatting characters
+            cmd = re.sub(r'[`*]', '', cmd).strip()
+            # Remove leading shell prompts, markdown headers, etc.
+            cmd = re.sub(r'^[#>$\s]+', '', cmd).strip()
             return cmd if cmd else None
         return None
 
