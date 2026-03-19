@@ -1,0 +1,9 @@
+# Model files (too large for git)
+models/*.gguf
+models/*.bin
+
+# Temp files
+*.log
+*.tmp
+__pycache__/
+*.pyc
