@@ -50,10 +50,19 @@ class AgentLoop:
         self.ui.render_boot_complete()
         self.watchdog.start()
 
-        # Seed the context with an initial user message so the
-        # Jinja chat template always has a user query to work with
+        # Few-shot seed: show the model the exact format we want
+        # by giving a fake example exchange, then asking it to continue
+        self.context.append_user("Scan the network.")
+        self.context.append_assistant(
+            "REASONING: Starting with a ping sweep to discover live hosts.\n"
+            "COMMAND: nmap -sn -T2 192.168.1.0/24"
+        )
         self.context.append_user(
-            "Begin. Analyze the current phase and execute your first action."
+            "[STATUS]: success\n[OUTPUT]:\n"
+            "Host is up (0.004s latency). 192.168.1.2\n"
+            "Host is up (0.039s latency). 192.168.1.13\n"
+            "4 hosts up.\n\n"
+            "Continue scanning. What is your next command?"
         )
 
         # Initial health check
