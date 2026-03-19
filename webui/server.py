@@ -72,9 +72,106 @@ def index():
 
 @app.route("/api/state")
 def api_state():
-    """Return full current state as JSON."""
+    """Return current state — merges in-memory state with disk data."""
+    log_dir = os.environ.get("NC_LOG_DIR",
+                             os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs"))
+
+    # Read findings from disk
+    findings_path = os.path.join(log_dir, "findings.json")
+    disk_findings = {}
+    if os.path.exists(findings_path):
+        try:
+            with open(findings_path) as f:
+                disk_findings = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    # Read recent timeline entries as feed
+    timeline_path = os.path.join(log_dir, "timeline.jsonl")
+    feed = []
+    if os.path.exists(timeline_path):
+        try:
+            with open(timeline_path) as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line.strip())
+                        ts = entry.get("timestamp", "")
+                        if ts:
+                            ts = ts.split("T")[1].split("Z")[0] if "T" in ts else ts
+                        if entry.get("command"):
+                            if entry.get("reasoning"):
+                                feed.append({"ts": ts, "type": "thought",
+                                             "content": entry["reasoning"][:300]})
+                            feed.append({"ts": ts, "type": "command",
+                                         "content": entry["command"]})
+                            status = entry.get("status", "?")
+                            preview = entry.get("output_preview", "")[:300]
+                            if status == "error":
+                                feed.append({"ts": ts, "type": "error",
+                                             "content": preview})
+                            elif status == "success":
+                                feed.append({"ts": ts, "type": "result",
+                                             "content": preview})
+                        elif entry.get("event"):
+                            feed.append({"ts": ts, "type": "thought",
+                                         "content": f"[{entry['event']}]"})
+                    except json.JSONDecodeError:
+                        pass
+        except IOError:
+            pass
+
+    # Build state from disk + in-memory
     with _state_lock:
-        return jsonify(_state)
+        state = dict(_state)
+
+    # Override with disk data (more reliable than in-memory when separate processes)
+    state["findings"] = {
+        "hosts": disk_findings.get("live_hosts", 0),
+        "ports": sum(len(h.get("ports", [])) for h in disk_findings.get("hosts", [])),
+        "creds": disk_findings.get("credentials", 0),
+        "vulns": disk_findings.get("vulnerabilities", 0),
+    }
+    state["hosts"] = disk_findings.get("hosts", [])
+    state["creds"] = disk_findings.get("creds", [])
+    state["vulns"] = disk_findings.get("vulns", [])
+    state["wifi_up"] = disk_findings.get("wifi_connected", False)
+
+    # Use disk feed if in-memory is empty
+    if not state.get("feed") and feed:
+        state["feed"] = feed[-200:]
+    elif feed:
+        # Merge: use whichever has more entries
+        if len(feed) > len(state.get("feed", [])):
+            state["feed"] = feed[-200:]
+
+    # Infer phase from disk
+    hosts = disk_findings.get("live_hosts", 0)
+    creds = disk_findings.get("credentials", 0)
+    vulns = disk_findings.get("vulnerabilities", 0)
+    if state.get("phase", "INIT") == "INIT":
+        if disk_findings.get("wifi_connected"):
+            if hosts >= 3:
+                state["phase"] = "ENUMERATE"
+            elif hosts > 0:
+                state["phase"] = "RECON & MAP"
+            else:
+                state["phase"] = "RECON & MAP"
+
+    # Count commands from log
+    cmds_path = os.path.join(log_dir, "commands.jsonl")
+    if os.path.exists(cmds_path):
+        try:
+            with open(cmds_path) as f:
+                lines = f.readlines()
+            state["commands_total"] = len(lines)
+            state["commands_blocked"] = sum(
+                1 for l in lines
+                if '"allowed": false' in l or '"allowed":false' in l
+            )
+        except IOError:
+            pass
+
+    return jsonify(state)
 
 
 @app.route("/api/feed")
