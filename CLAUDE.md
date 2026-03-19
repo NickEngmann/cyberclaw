@@ -12,13 +12,15 @@
 ```bash
 # Local network
 ssh -p 9022 shell@192.168.1.53
-# Via Tailscale
-ssh -p 22 shell@<tailscale-ip>
+# Via Tailscale (drops into Kali root shell)
+ssh root@<tailscale-ip>
 # Enter Kali chroot
 /data/data/com.offsec.nhterm/files/usr/bin_aarch64/kali
 ```
 
-Both ports auto-start on boot via Magisk openssh module.
+Port 9022: Android shell (Magisk openssh)
+Port 22: Kali root shell (openssh-server in chroot)
+Both auto-start on boot via Magisk service.sh.
 
 ## GPU Inference (OpenCL) - RECOMMENDED
 
