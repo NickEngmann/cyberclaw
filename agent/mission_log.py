@@ -54,11 +54,23 @@ class MissionLog:
         self._save_findings()
 
     def add_host(self, ip: str, ports: list = None, info: str = ""):
-        host = {"ip": ip, "ports": ports or [], "info": info}
-        if ip not in [h["ip"] for h in self._findings["hosts"]]:
-            self._findings["hosts"].append(host)
-            self._findings["live_hosts"] = len(self._findings["hosts"])
-            self._save_findings()
+        existing = next((h for h in self._findings["hosts"] if h["ip"] == ip), None)
+        if existing:
+            # Merge: add new ports, update info if richer
+            for p in (ports or []):
+                if p not in existing["ports"]:
+                    existing["ports"].append(p)
+            if info and len(info) > len(existing.get("info", "")):
+                existing["info"] = info
+        else:
+            self._findings["hosts"].append(
+                {"ip": ip, "ports": ports or [], "info": info}
+            )
+        self._findings["live_hosts"] = len(self._findings["hosts"])
+        self._findings["open_ports"] = sum(
+            len(h["ports"]) for h in self._findings["hosts"]
+        )
+        self._save_findings()
 
     def add_credential(self, service: str, username: str, password: str,
                        host: str = ""):
