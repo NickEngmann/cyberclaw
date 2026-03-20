@@ -16,6 +16,40 @@ SERVICES_OK=0
 SERVICES_FAIL=0
 NOTES=""
 
+# ── 0. Kill duplicate processes (memory leak prevention) ──
+AGENT_COUNT=$(pgrep -fc "python3 main.py" 2>/dev/null || echo 0)
+if [ "$AGENT_COUNT" -gt 1 ]; then
+    echo "  [WARN] $AGENT_COUNT agent processes — killing all but newest" >> "$HEALTH_LOG"
+    NEWEST_PID=$(pgrep -f "python3 main.py" | tail -1)
+    pgrep -f "python3 main.py" | while read pid; do
+        [ "$pid" != "$NEWEST_PID" ] && kill -9 "$pid" 2>/dev/null
+    done
+    NOTES="${NOTES}killed-dup-agents "
+fi
+
+MCP_COUNT=$(pgrep -fc "kali_server.py\|kali-server-mcp" 2>/dev/null || echo 0)
+if [ "$MCP_COUNT" -gt 1 ]; then
+    echo "  [WARN] $MCP_COUNT kali-server processes — killing all but newest" >> "$HEALTH_LOG"
+    NEWEST_PID=$(pgrep -f "kali_server.py\|kali-server-mcp" | tail -1)
+    pgrep -f "kali_server.py\|kali-server-mcp" | while read pid; do
+        [ "$pid" != "$NEWEST_PID" ] && kill -9 "$pid" 2>/dev/null
+    done
+    NOTES="${NOTES}killed-dup-mcp "
+fi
+
+PROXY_COUNT=$(pgrep -fc "scope_proxy.py" 2>/dev/null || echo 0)
+if [ "$PROXY_COUNT" -gt 1 ]; then
+    echo "  [WARN] $PROXY_COUNT proxy processes — killing all but newest" >> "$HEALTH_LOG"
+    NEWEST_PID=$(pgrep -f "scope_proxy.py" | tail -1)
+    pgrep -f "scope_proxy.py" | while read pid; do
+        [ "$pid" != "$NEWEST_PID" ] && kill -9 "$pid" 2>/dev/null
+    done
+    NOTES="${NOTES}killed-dup-proxy "
+fi
+
+# Drop caches periodically
+echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
+
 # ── 1. llama-server ──────────────────────────────────
 LLAMA_COUNT=$(pgrep -c llama-server 2>/dev/null || echo 0)
 if [ "$LLAMA_COUNT" -gt 1 ]; then

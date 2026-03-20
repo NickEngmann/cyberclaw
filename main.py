@@ -3,9 +3,26 @@
 
 import asyncio
 import os
+import signal
 import subprocess
 import sys
 import yaml
+
+
+def _kill_existing_agents():
+    """Kill any other main.py instances to prevent duplicate agents."""
+    my_pid = os.getpid()
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "python3 main.py"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in result.stdout.strip().split("\n"):
+            pid = int(line.strip()) if line.strip() else 0
+            if pid and pid != my_pid:
+                os.kill(pid, signal.SIGKILL)
+    except Exception:
+        pass
 
 from agent.llm_client import LLMClient
 from agent.loop import AgentLoop
@@ -67,6 +84,8 @@ def load_config(path: str = "config.yaml") -> dict:
 
 
 async def main():
+    _kill_existing_agents()  # Prevent duplicate agent processes (memory leak)
+
     config_path = os.environ.get("NC_CONFIG", "config.yaml")
     config = load_config(config_path)
 
