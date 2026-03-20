@@ -15,6 +15,10 @@ from flask import Flask, render_template, jsonify, Response
 try:
     from agent import db as _db
     _HAS_DB = True
+    # Auto-init DB if not already initialized
+    _db_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+    if not _db.DB_PATH:
+        _db.init_db(_db_dir)
 except ImportError:
     _HAS_DB = False
 
