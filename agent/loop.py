@@ -390,10 +390,29 @@ class AgentLoop:
                     # about previous hosts. Fresh context = better rotation.
                     self.context.clear()
                     output_summary = result.get("output", "")[:500]
+
+                    # Suggest a random live host (not the one just scanned)
+                    # to prevent sequential scanning patterns
+                    import random as _random
+                    try:
+                        all_hosts = db.get_hosts()
+                        excluded = set(self.config["mission"]["scope"].get(
+                            "excluded_hosts", []))
+                        candidates = [h["ip"] for h in all_hosts
+                                      if h["ip"] not in excluded
+                                      and h["ip"] not in command]
+                        if candidates:
+                            suggested = _random.choice(candidates)
+                            hint = f"Try probing {suggested} next. "
+                        else:
+                            hint = ""
+                    except Exception:
+                        hint = ""
+
                     self.context.append_user(
                         f"[LAST COMMAND]: {command}\n"
                         f"[RESULT]: {output_summary}\n\n"
-                        "Now pick a DIFFERENT host. "
+                        f"{hint}"
                         "REASONING: [text] COMMAND: [command]"
                     )
                 else:
