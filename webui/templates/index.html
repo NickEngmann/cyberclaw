@@ -396,6 +396,9 @@
         }
         .star-icon:hover { opacity: 0.7; }
         .star-icon.starred { opacity: 1; color: var(--yellow); }
+        .blacklist-icon { cursor: pointer; font-size: 12px; margin-right: 4px; opacity: 0.3; }
+        .blacklist-icon:hover { opacity: 0.7; }
+        .blacklist-icon.active { opacity: 1; color: var(--red); }
 
         /* Host notes */
         .host-notes {
@@ -561,6 +564,41 @@
             <span id="network-buttons"></span>
         </div>
 
+        <!-- Network Edit Modal -->
+        <div id="net-edit-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:2000; justify-content:center; align-items:center;">
+            <div style="background:var(--bg-panel); border:1px solid var(--green); padding:20px; max-width:500px; width:90%; margin:auto; margin-top:15vh;">
+                <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
+                    <span style="color:var(--green); font-weight:bold;">EDIT NETWORK</span>
+                    <span style="cursor:pointer; color:var(--text-dim);" onclick="closeNetEdit()">✕</span>
+                </div>
+                <div style="margin-bottom:10px;">
+                    <label style="color:var(--text-dim); font-size:11px; display:block; margin-bottom:3px;">NETWORK ID</label>
+                    <div id="net-edit-id" style="color:var(--cyan); font-size:12px;"></div>
+                </div>
+                <div style="margin-bottom:10px;">
+                    <label style="color:var(--text-dim); font-size:11px; display:block; margin-bottom:3px;">CIDR</label>
+                    <div id="net-edit-cidr" style="color:var(--text); font-size:12px;"></div>
+                </div>
+                <div style="margin-bottom:10px;">
+                    <label style="color:var(--text-dim); font-size:11px; display:block; margin-bottom:3px;">GATEWAY MAC</label>
+                    <div id="net-edit-mac" style="color:var(--text); font-size:12px;"></div>
+                </div>
+                <div style="margin-bottom:10px;">
+                    <label style="color:var(--text-dim); font-size:11px; display:block; margin-bottom:3px;">PUBLIC IP</label>
+                    <div id="net-edit-pubip" style="color:var(--text); font-size:12px;"></div>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="color:var(--text-dim); font-size:11px; display:block; margin-bottom:3px;">DISPLAY NAME</label>
+                    <input type="text" id="net-edit-name" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--green); padding:6px 8px; font-family:inherit; font-size:13px;" placeholder="e.g. Client Office A">
+                </div>
+                <div style="margin-bottom:15px;">
+                    <label style="color:var(--text-dim); font-size:11px; display:block; margin-bottom:3px;">NOTES</label>
+                    <textarea id="net-edit-notes" rows="4" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 8px; font-family:inherit; font-size:12px; resize:vertical;" placeholder="Analyst notes about this network..."></textarea>
+                </div>
+                <button onclick="saveNetEdit()" style="background:var(--green-dim); border:1px solid var(--green); color:var(--green); padding:6px 16px; cursor:pointer; font-family:inherit; font-size:13px; width:100%;">SAVE</button>
+            </div>
+        </div>
+
         <!-- Control Bar -->
         <div class="control-bar">
             <button id="pause-btn" onclick="togglePause()">&#9208; PAUSE</button>
@@ -716,6 +754,7 @@
         let agentPaused = false;
         let agentKilled = false;
         let starredMacs = new Set();
+        let blacklistedMacs = new Set();
         let hostNotes = {};
         let searchTimeout = null;
 
@@ -737,6 +776,13 @@
 
                 const starred = await starredResp.json();
                 starredMacs = new Set((starred || []).map(s => s.mac));
+
+                // Load blacklisted hosts
+                try {
+                    const blResp = await fetch('/api/hosts/blacklisted');
+                    const bl = await blResp.json();
+                    blacklistedMacs = new Set((bl || []).map(b => b.mac));
+                } catch(e) {}
 
                 const config = await configResp.json();
                 document.getElementById('cfg-temperature').value = config.temperature || 0.7;
@@ -875,6 +921,27 @@
                     body: JSON.stringify({mac: mac, iterations: 5})
                 });
                 starredMacs.add(mac);
+            }
+            lastHostFingerprint = '';
+            pollFindings();
+        }
+
+        async function toggleBlacklist(mac, ip, evt) {
+            evt.stopPropagation();
+            if (blacklistedMacs.has(mac)) {
+                await fetch('/api/hosts/blacklist', {
+                    method: 'DELETE',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({mac: mac})
+                });
+                blacklistedMacs.delete(mac);
+            } else {
+                await fetch('/api/hosts/blacklist', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({mac: mac, ip: ip})
+                });
+                blacklistedMacs.add(mac);
             }
             lastHostFingerprint = '';
             pollFindings();
@@ -1038,18 +1105,62 @@
                 container.innerHTML = '';
                 for (const n of nets) {
                     const nid = n.network_id || n.cidr;
+                    const wrap = document.createElement('span');
+                    wrap.style.display = 'inline-flex';
+                    wrap.style.gap = '0';
+
                     const btn = document.createElement('button');
                     btn.className = 'network-btn' + (selectedNetwork === nid ? ' active' : '');
                     btn.id = 'net-' + nid;
-                    btn.textContent = n.ssid ? n.ssid + ' (' + n.cidr + ')' : n.cidr;
+                    btn.textContent = n.display_name || n.ssid || n.cidr;
                     if (n.gateway_mac) btn.title = 'Gateway: ' + n.gateway_mac;
                     btn.onclick = () => selectNetwork(nid);
-                    container.appendChild(btn);
+
+                    const edit = document.createElement('button');
+                    edit.className = 'network-btn';
+                    edit.style.padding = '3px 6px';
+                    edit.style.borderLeft = 'none';
+                    edit.textContent = '✎';
+                    edit.title = 'Edit network';
+                    edit.onclick = (e) => { e.stopPropagation(); openNetEdit(n); };
+
+                    wrap.appendChild(btn);
+                    wrap.appendChild(edit);
+                    container.appendChild(wrap);
                 }
             } catch (e) {}
         }
         setInterval(loadNetworks, 10000);
         loadNetworks();
+
+        // Network edit modal
+        let editingNetworkId = null;
+        function openNetEdit(net) {
+            editingNetworkId = net.network_id || net.cidr;
+            document.getElementById('net-edit-id').textContent = editingNetworkId;
+            document.getElementById('net-edit-cidr').textContent = net.cidr || '?';
+            document.getElementById('net-edit-mac').textContent = net.gateway_mac || 'unknown';
+            document.getElementById('net-edit-pubip').textContent = net.public_ip || 'unknown';
+            document.getElementById('net-edit-name').value = net.display_name || net.ssid || '';
+            document.getElementById('net-edit-notes').value = net.notes || '';
+            document.getElementById('net-edit-modal').style.display = 'flex';
+        }
+        function closeNetEdit() {
+            document.getElementById('net-edit-modal').style.display = 'none';
+            editingNetworkId = null;
+        }
+        async function saveNetEdit() {
+            if (!editingNetworkId) return;
+            const name = document.getElementById('net-edit-name').value;
+            const notes = document.getElementById('net-edit-notes').value;
+            await fetch('/api/networks/' + encodeURIComponent(editingNetworkId), {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name, notes})
+            });
+            closeNetEdit();
+            loadNetworks();
+        }
 
         // Parse port/service pairs from info string
         function parseServices(info) {
@@ -1106,6 +1217,7 @@
 
                         const mac = h.mac || '';
                         const isStarred = starredMacs.has(mac);
+                        const isBlacklisted = blacklistedMacs.has(mac);
                         const macSafe = mac.replace(/:/g, '-');
 
                         // Port lines for expanded view
@@ -1130,8 +1242,9 @@
                         card.innerHTML = `
                             <div class="host-card-header">
                                 <div>
-                                    <span class="star-icon ${isStarred ? 'starred' : ''}" onclick="toggleStar('${esc(mac)}', event)">\u2B50</span>
-                                    <span class="host-ip">${esc(h.ip)}</span>
+                                    <span class="star-icon ${isStarred ? 'starred' : ''}" onclick="toggleStar('${esc(mac)}', event)" title="Star: prioritize scanning">\u2B50</span>
+                                    <span class="blacklist-icon ${isBlacklisted ? 'active' : ''}" onclick="toggleBlacklist('${esc(mac)}', '${esc(h.ip)}', event)" title="Blacklist: skip this host">\u26D4</span>
+                                    <span class="host-ip" style="${isBlacklisted ? 'text-decoration:line-through; opacity:0.5' : ''}">${esc(h.ip)}</span>
                                     ${h.hostname ? `<span class="host-hostname"> (${esc(h.hostname)})</span>` : ''}
                                     <span style="color:var(--text-dim); margin-left:8px">${(h.ports||[]).length} ports</span>
                                 </div>

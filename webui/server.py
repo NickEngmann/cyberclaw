@@ -309,10 +309,40 @@ def api_networks():
     """Return list of discovered networks."""
     if _HAS_DB and _db.DB_PATH:
         try:
-            return jsonify(_db.get_networks())
+            nets = _db.get_networks()
+            # Attach notes from state
+            net_notes = _db.get_state("network_notes", {})
+            net_names = _db.get_state("network_names", {})
+            for n in nets:
+                nid = n.get("network_id", "")
+                n["display_name"] = net_names.get(nid, "") or n.get("ssid", "") or n.get("cidr", "")
+                n["notes"] = net_notes.get(nid, "")
+            return jsonify(nets)
         except Exception:
             pass
     return jsonify([])
+
+
+@app.route("/api/networks/<network_id>", methods=["PATCH"])
+def api_edit_network(network_id):
+    """Edit network name and notes."""
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify({"error": "DB not available"}), 500
+    data = request.json or {}
+    name = data.get("name")
+    notes = data.get("notes")
+
+    if name is not None:
+        names = _db.get_state("network_names", {})
+        names[network_id] = name
+        _db.set_state("network_names", names)
+
+    if notes is not None:
+        net_notes = _db.get_state("network_notes", {})
+        net_notes[network_id] = notes
+        _db.set_state("network_notes", net_notes)
+
+    return jsonify({"ok": True, "network_id": network_id})
 
 
 # ── C2 Control Endpoints ──────────────────────────────────
@@ -370,6 +400,46 @@ def api_starred_hosts():
     if not _HAS_DB or not _db.DB_PATH:
         return jsonify([])
     return jsonify(_db.get_state("starred_hosts", []))
+
+
+# 1b. Blacklist Hosts
+@app.route("/api/hosts/blacklist", methods=["POST"])
+def api_blacklist_host():
+    """Blacklist a host — agent will skip it entirely."""
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify({"error": "DB not available"}), 503
+    data = request.get_json(force=True)
+    mac = data.get("mac", "")
+    ip = data.get("ip", "")
+    if not mac and not ip:
+        return jsonify({"error": "mac or ip required"}), 400
+
+    blacklist = _db.get_state("blacklisted_hosts", [])
+    # Don't add duplicates
+    if not any(b.get("mac") == mac for b in blacklist):
+        blacklist.append({"mac": mac, "ip": ip})
+        _db.set_state("blacklisted_hosts", blacklist)
+    return jsonify({"ok": True, "blacklisted": blacklist})
+
+
+@app.route("/api/hosts/blacklist", methods=["DELETE"])
+def api_unblacklist_host():
+    """Remove a host from blacklist."""
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify({"error": "DB not available"}), 503
+    data = request.get_json(force=True)
+    mac = data.get("mac", "")
+    blacklist = _db.get_state("blacklisted_hosts", [])
+    blacklist = [b for b in blacklist if b.get("mac") != mac]
+    _db.set_state("blacklisted_hosts", blacklist)
+    return jsonify({"ok": True, "blacklisted": blacklist})
+
+
+@app.route("/api/hosts/blacklisted")
+def api_blacklisted_hosts():
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify([])
+    return jsonify(_db.get_state("blacklisted_hosts", []))
 
 
 # 2. Force Phase Change

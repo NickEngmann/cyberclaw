@@ -510,4 +510,10 @@ def export_network(network_id: str = None) -> dict:
         "findings": get_findings_summary(network_id),
         "timeline": get_timeline(limit=500, network=network_id),
         "commands": get_commands(limit=500, network=network_id),
+        "blacklisted_hosts": get_state("blacklisted_hosts", []),
+        "starred_hosts": get_state("starred_hosts", []),
+        "host_notes": get_state("host_notes", {}),
+        "network_notes": get_state("network_notes", {}),
+        "network_names": get_state("network_names", {}),
+        "tool_preferences": get_state("tool_preferences", {}),
     }

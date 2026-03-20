@@ -182,9 +182,35 @@ class AgentLoop:
                     disabled = tool_prefs.get("disabled", [])
                     preferred = tool_prefs.get("preferred", [])
                     if disabled:
-                        system += f"\nAVOID: {', '.join(disabled)}"
+                        system += f"\nAVOID tools: {', '.join(disabled)}"
                     if preferred:
-                        system += f"\nPREFER: {', '.join(preferred)}"
+                        system += f"\nPREFER tools: {', '.join(preferred)}"
+
+                # Add blacklisted hosts to prompt (skip these entirely)
+                blacklist = db.get_state("blacklisted_hosts", [])
+                if blacklist:
+                    bl_ips = [b["ip"] for b in blacklist if b.get("ip")]
+                    if bl_ips:
+                        system += f"\nBLACKLIST (do NOT scan): {', '.join(bl_ips)}"
+
+                # Add host notes from analyst (context for the model)
+                host_notes = db.get_state("host_notes", {})
+                if host_notes:
+                    notes_text = ""
+                    for mac, note in host_notes.items():
+                        if note.strip():
+                            # Resolve MAC to IP for the model
+                            ip = mac  # fallback
+                            try:
+                                for h in db.get_hosts():
+                                    if h["mac"] == mac:
+                                        ip = h["ip"]
+                                        break
+                            except Exception:
+                                pass
+                            notes_text += f"\n  {ip}: {note[:100]}"
+                    if notes_text:
+                        system += f"\nANALYST NOTES:{notes_text}"
 
                 messages = self.context.get_messages()
 
