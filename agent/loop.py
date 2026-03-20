@@ -391,21 +391,30 @@ class AgentLoop:
                     self.context.clear()
                     output_summary = result.get("output", "")[:500]
 
-                    # Suggest a random live host (not the one just scanned)
-                    # to prevent sequential scanning patterns
+                    # Suggest a random host — weighted toward hosts with open ports
+                    # (70% chance interesting host, 30% chance any random host)
                     import random as _random
                     try:
                         all_hosts = db.get_hosts()
                         excluded = set(self.config["mission"]["scope"].get(
                             "excluded_hosts", []))
-                        candidates = [h["ip"] for h in all_hosts
-                                      if h["ip"] not in excluded
-                                      and h["ip"] not in command]
-                        if candidates:
-                            suggested = _random.choice(candidates)
-                            hint = f"Try probing {suggested} next. "
+                        interesting = [h["ip"] for h in all_hosts
+                                       if h["ip"] not in excluded
+                                       and h["ip"] not in command
+                                       and len(h.get("ports", [])) > 0]
+                        others = [h["ip"] for h in all_hosts
+                                  if h["ip"] not in excluded
+                                  and h["ip"] not in command
+                                  and len(h.get("ports", [])) == 0]
+                        if interesting and _random.random() < 0.7:
+                            suggested = _random.choice(interesting)
+                        elif others:
+                            suggested = _random.choice(others)
+                        elif interesting:
+                            suggested = _random.choice(interesting)
                         else:
-                            hint = ""
+                            suggested = ""
+                        hint = f"Try probing {suggested} next. " if suggested else ""
                     except Exception:
                         hint = ""
 
