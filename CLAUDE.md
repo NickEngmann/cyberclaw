@@ -35,7 +35,7 @@ ssh root@<tailscale-ip>           # Kali root shell (port 22)
 | 22   | SSH     | Kali root shell |
 | 9022 | SSH     | Android shell (Magisk) |
 | 5000 | kali_executor.py | Real command executor (subprocess) |
-| 8080 | llama-server | Qwen3.5-2B Q8_0 via llama.cpp (ctx=8192) |
+| 8080 | llama-server | Qwen3.5-2B-Unredacted-MAX Q8_0 (abliterated) via llama.cpp (ctx=8192) |
 | 8800 | scope-proxy | Scope enforcement + rate limit + audit |
 | 8888 | web UI | Dashboard (Tailscale IP only, HTTPS) |
 

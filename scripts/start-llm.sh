@@ -13,7 +13,7 @@
 
 TERMUX_HOME=/data/data/com.termux/files/home
 KERNEL_DIR=${TERMUX_HOME}/llama.cpp/ggml/src/ggml-opencl/kernels
-MODEL=${1:-${TERMUX_HOME}/models/Qwen3.5-2B-Q8_0.gguf}
+MODEL=${1:-${TERMUX_HOME}/models/Qwen3.5-2B-Unredacted-MAX.Q8_0.gguf}
 PORT=${2:-8080}
 LLAMA_LOG=/data/local/tmp/var/log/llama-server.log
 

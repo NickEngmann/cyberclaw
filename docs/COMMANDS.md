@@ -21,7 +21,7 @@ su 10393 -c "export LD_LIBRARY_PATH=/vendor/lib64; \
   export GGML_OPENCL_PLATFORM=0; export GGML_OPENCL_DEVICE=0; \
   cd $TERMUX_HOME/llama.cpp/ggml/src/ggml-opencl/kernels; \
   $TERMUX_HOME/llama.cpp/build-fast/bin/llama-cli \
-  -m $TERMUX_HOME/models/Qwen3.5-2B-Q8_0.gguf \
+  -m $TERMUX_HOME/models/Qwen3.5-2B-Unredacted-MAX.Q8_0.gguf \
   -ngl 99 -c 512 -n 200 -no-cnv \
   -p 'Your prompt here'"
 ```
