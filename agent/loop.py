@@ -19,8 +19,8 @@ except ImportError:
 class AgentLoop:
     """Main decision engine — calls LLM, executes commands through proxy."""
 
-    MAX_CONSECUTIVE_ERRORS = 5
-    RETRY_DELAYS = [2, 5, 15, 30, 60]
+    MAX_CONSECUTIVE_ERRORS = 8
+    RETRY_DELAYS = [2, 3, 5, 8, 10, 15, 20, 30]
     HEARTBEAT_INTERVAL = 10
 
     def __init__(self, config: dict, llm_client: LLMClient,
@@ -272,13 +272,21 @@ class AgentLoop:
                 )
                 if self.consecutive_errors >= self.MAX_CONSECUTIVE_ERRORS:
                     self.ui.render_error(
-                        "5 consecutive errors. Pausing 5 min."
+                        f"{self.MAX_CONSECUTIVE_ERRORS} errors. "
+                        "Resetting context and pausing 60s."
                     )
-                    await asyncio.sleep(300)
+                    # Reset context instead of long pause
+                    self.context.clear()
+                    self.context.append_user(
+                        "Context reset. Scan the next host. "
+                        "REASONING: [text] COMMAND: [command]"
+                    )
+                    await asyncio.sleep(60)
                     self.consecutive_errors = 0
                 else:
                     delay = self.RETRY_DELAYS[
-                        min(self.consecutive_errors - 1, 4)
+                        min(self.consecutive_errors - 1,
+                            len(self.RETRY_DELAYS) - 1)
                     ]
                     await asyncio.sleep(delay)
 
