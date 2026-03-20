@@ -165,10 +165,10 @@ class AgentLoop:
                     push_feed("warning",
                               f"Garbage output #{self.total_garbage}")
 
-                    # After 10 consecutive garbage outputs, full reset
-                    if self.garbage_streak >= 10:
-                        self.ui.render_warning("10 garbage streak — resetting context")
-                        push_feed("warning", "Context reset after 10 garbage")
+                    # After 5 consecutive garbage outputs, full reset
+                    if self.garbage_streak >= 5:
+                        self.ui.render_warning("5 garbage streak — resetting context")
+                        push_feed("warning", "Context reset after 5 garbage")
                         self.context.clear()
                         self.context.append_user(
                             f"Context was reset. You are in {self.planner.phase_name}. "
@@ -257,12 +257,22 @@ class AgentLoop:
                             self.llm.notify_wifi_connected()
                             self.mission_log.set_finding("wifi_connected", True)
                 else:
-                    # No command — add a user follow-up to maintain
-                    # alternating user/assistant message pattern
-                    self.context.append_user(
-                        "Continue. Provide your next action as: "
-                        "REASONING: [analysis] COMMAND: [single command]"
-                    )
+                    # No command produced — track streak
+                    self.garbage_streak += 1
+                    if self.garbage_streak >= 5:
+                        self.ui.render_warning("5 no-command streak — resetting context")
+                        push_feed("warning", "Context reset: no commands")
+                        self.context.clear()
+                        self.context.append_user(
+                            "Enumerate services on 192.168.1.2. "
+                            "REASONING: [text] COMMAND: [command]"
+                        )
+                        self.garbage_streak = 0
+                    else:
+                        self.context.append_user(
+                            "You MUST include a COMMAND line. "
+                            "REASONING: [text] COMMAND: [single command]"
+                        )
 
                 # Phase transition check
                 changed = self.planner.evaluate(self.mission_log)
