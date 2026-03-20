@@ -20,6 +20,8 @@ Nightcrawler is a drop box that thinks for itself. Deploy the phone, walk away, 
 4. **Probes with diverse tools** — nmap, curl, smbclient, dig, netcat, telnet
 5. **Reports findings** with full command audit trail + exportable JSON for Thor
 
+The agent thinks like a patient red teamer — rotating across hosts, doing one small action per turn, building knowledge slowly over hours. No burst scanning, no loud enumeration. Stealth first.
+
 All reasoning is done by a local Qwen3.5-2B model running on the phone's GPU via llama.cpp + OpenCL. No cloud, no API keys, no cellular needed.
 
 ## Hardware

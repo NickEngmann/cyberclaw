@@ -134,9 +134,16 @@ Kali Linux (chroot)
 ```
 
 - **Phase 0 (WiFi Breach):** Air-gapped, local only. Crack WiFi, connect, bring up Tailscale. **Auto-skipped** if network already detected.
-- **Phase 1 (Recon):** nmap stealth scans, map subnet, identify targets.
-- **Phase 2 (Enumerate):** Deep-dive services. SMB, HTTP, databases. Null sessions, default creds.
-- **Phase 3 (Exploit):** Demonstrate impact. Validate access, enumerate sensitive data.
+- **Phase 1 (Recon):** Discover hosts slowly. One host per turn, rotate.
+- **Phase 2 (Enumerate):** Probe services across many hosts. Rotate each turn.
+- **Phase 3 (Exploit):** Carefully attempt exploitation on hosts with accumulated context.
+- **Phase 4 (Cleanup):** Verify findings logged, disconnect, sync to Thor.
+
+**Important:** Phases track overall mission progress, but the agent doesn't wait to
+finish one phase before starting the next on individual hosts. A host can be in
+"recon" (just discovered) while another is in "enumerate" (ports known) and another
+is ready for "exploit" (services + versions identified). The agent rotates across
+all hosts, doing one small action per turn, building knowledge gradually.
 - **Phase 4 (Cleanup):** Verify findings logged, disconnect, sync to Thor.
 
 ---
@@ -243,6 +250,48 @@ Shows:
 - Findings summary counters
 
 Polls `/api/state` every second. Also supports SSE streaming at `/api/stream`.
+
+---
+
+## Red Team Strategy
+
+The agent operates as a patient adversary, not a vulnerability scanner:
+
+```
+Traditional Scanner:          Nightcrawler:
+  Recon ALL hosts              Discover host A
+  ↓                            Probe host B port 22
+  Enumerate ALL services       Check host C HTTP
+  ↓                            Back to host A, try SMB
+  Exploit ALL vulns            Discover host D
+                               Back to host B, check version
+                               ...hours pass...
+                               Host A has enough context → exploit
+```
+
+Key principles:
+- **Rotate hosts** — never hit the same host twice in a row
+- **One action per turn** — single curl, dig, nmap port check
+- **Build knowledge gradually** — host memory accumulates over many visits
+- **Spread traffic** — no single host sees a burst
+- **Exploit only when ready** — after many prior touches build context
+- **Stealth first** — -T2 timing, rate limiting, jitter
+
+Host memory (auto-generated observations) prevents the agent from repeating
+dead-end approaches. The red teamer can edit these via the web UI to steer
+the agent's priorities.
+
+---
+
+## Training Data Capture
+
+Successful agent interactions are saved for finetuning:
+- **Storage**: `training_data/` with 20GB budget and auto-rotation
+- **Format**: JSONL files per day per phase, ChatML included
+- **Content**: system prompt + messages + model response + command output
+- **Only successes**: garbage, errors, and empty outputs are excluded
+- **API**: `/api/training/stats`, `/api/training/export/{format}`
+- **Finetuning goal**: Improve format compliance from ~50% to 85%+
 
 ---
 

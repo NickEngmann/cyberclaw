@@ -123,15 +123,39 @@ The web UI at `:8888` has full C2 controls:
 - **Config panel**: Live temperature/max_tokens editing
 - **Command search**: Search history by keyword
 
-## Key Architecture Decisions (from 36h test run)
+## Red Team Strategy (Patient Rotation)
+The agent operates like a stealthy adversary with infinite time:
+- **Rotate hosts** — never hit the same host twice in a row
+- **One small action per turn** — single curl, single dig, single port check
+- **Build knowledge slowly** — host memory accumulates across many visits over hours
+- **Spread activity** — no single host sees a burst of traffic
+- **Exploitation only when ready** — after many low-profile touches build context naturally
+- This is NOT "recon all → enumerate all → exploit all" (too rigid)
+- This is NOT "find host → enumerate everything → exploit immediately" (too loud)
+- The phase system (RECON/ENUMERATE/EXPLOIT) tracks overall mission progress,
+  but the agent acts per-host based on accumulated knowledge
+
+## Training Data Capture
+Successful interactions are captured for model finetuning:
+- **Location**: `training_data/` (20GB budget, auto-rotation)
+- **Format**: JSONL with ChatML, per-day per-phase files
+- **Captures**: system prompt + messages + response + command output
+- **Only successes** — no garbage, errors, or refusals
+- **Stats**: `GET /api/training/stats`
+- **Export**: `GET /api/training/export/{chatml|jsonl|conversations}`
+- Expected impact: format compliance from ~50% to 85%+ with finetuning
+
+## Key Architecture Decisions
 - **Few-shot prompting** is essential — the 2B model follows examples, not instructions
 - **Phase-aware seed**: RECON uses nmap example, ENUMERATE uses curl example
 - **Garbage detection** with 5-streak context reset prevents model spiral
 - **Duplicate command detection** forces tool/target diversification
+- **Patient host rotation** — spread activity across network, one action per host per turn
 - **SQLite backend** (not JSON files) for memory efficiency and concurrent access
 - **MAC-keyed hosts** survive DHCP changes, tagged by network_id (gateway MAC hash)
 - **Network discrimination**: Same CIDR on different routers = separate data
 - **kali-server-mcp** eliminates shell interpretation errors vs subprocess shell=True
+- **Host memory** — auto-generated observations prevent repeating dead-end approaches
 - **Agent RSS stays ~35-50MB** — no memory leak when not restarting repeatedly
 - Repeated agent restarts DO leak memory (Python process accumulation) — avoid
 
