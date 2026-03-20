@@ -66,11 +66,24 @@ def execute():
 
     try:
         resp = requests.post(
-            f"{upstream_url}/execute",
+            f"{upstream_url}/api/command",
             json={"command": command},
             timeout=300
         )
-        result = resp.json()
+        raw = resp.json()
+        # Translate kali-server-mcp response to our format
+        output = raw.get("stdout", "")
+        if raw.get("stderr"):
+            output += ("\n" + raw["stderr"]) if output else raw["stderr"]
+        result = {
+            "status": "success" if raw.get("success") else "error",
+            "output": output,
+            "return_code": raw.get("return_code", -1),
+        }
+        if raw.get("timed_out"):
+            result["status"] = "error"
+            result["error"] = "Command timed out"
+
         audit_logger.log_command(command, True, "OK",
                                  result.get("status", "unknown"))
         return jsonify(result)
