@@ -83,9 +83,11 @@ llama.cpp compiled in Termux with Adreno-optimized OpenCL kernels. Runs as root 
 
 ## Data Storage
 - **SQLite DB**: `logs/nightcrawler.db` — primary store (WAL mode, MAC-keyed hosts, multi-network)
+- **Host memories**: `host_memories` in SQLite state — auto-generated observations + analyst edits
 - **JSON compat**: `logs/findings.json`, `logs/timeline.jsonl`, `logs/commands.jsonl`
 - **Prompts**: `prompts/*.md` — hot-reloadable, edit to tune model behavior
-- **Export for Thor**: `GET /api/export/<network>` — full JSON dump per network
+- **Export for Thor**: `GET /api/export/<network>` — full JSON dump per network (includes memories)
+- **Memory export**: `GET /api/hosts/memories/export` — all host observations for Thor
 
 ## kali-server-mcp vs kali_executor.py
 Switched from custom `kali_executor.py` to the official `kali-server-mcp` package:
@@ -94,6 +96,18 @@ Switched from custom `kali_executor.py` to the official `kali-server-mcp` packag
 - **Response**: Returns `{stdout, stderr, return_code, success, timed_out}`
 - **Proxy translation**: Maps to `{status, output, return_code}` for the agent
 - `kali_executor.py` still exists as a fallback but is not used in production
+
+## Host Memory System
+The agent auto-generates observations from scan results and injects them
+into the system prompt (capped at 200 tokens) to prevent repeating dead-end
+approaches. Red teamers can add/edit observations via the web UI.
+
+- **Auto-extracted**: HTTP servers, SSH versions, SMB shares, filtered ports
+- **Status**: unknown → interesting → compromised (or dead-end)
+- **Tags**: auto-generated (pi-hole, ssh, smb, dns)
+- **Avoid tools**: per-host tool exclusions
+- **Exportable**: `GET /api/hosts/memories/export` for Thor
+- **Editable**: Click host → MEMORY section → add observations, set status
 
 ## C2 Interactive Features (Web UI)
 The web UI at `:8888` has full C2 controls:

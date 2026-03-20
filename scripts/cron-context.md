@@ -33,6 +33,13 @@ You are monitoring the Nightcrawler autonomous pentest agent. Check in every 10 
 - `logs/commands.jsonl` — command audit trail
 - `nightcrawler-finetuning-logs.md` — your notes and observations
 
+## Host Memory
+The agent auto-generates observations about hosts (HTTP servers, SSH versions, etc.)
+and injects them into the system prompt. Check `/api/hosts/memories` to see what
+the agent has learned. Red teamer edits via the UI also appear here.
+- Dead-end hosts should be marked as such (status: dead-end)
+- The memory context is capped at 200 tokens to avoid bloating the system prompt
+
 ## Common Issues
 - Model produces garbage ~50%: handled by garbage detection, 5-streak resets context
 - Model refuses pentest: handled by refusal detection, re-prompts with auth context
