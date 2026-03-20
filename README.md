@@ -7,7 +7,7 @@ Autonomous mobile penetration testing agent running on Kali NetHunter.
  ░█░▀█ █ █▄█ █▀█ ░█░ █▄▄ █▀▄ █▀█ ▀▄▀▄▀ █▄▄ ██▄ █▀▄  v0.1.0
 
  AUTONOMOUS MOBILE PENTEST AGENT
- OnePlus 8 · NetHunter · Qwen3.5-2B · mcp-kali-server
+ OnePlus 8 · NetHunter · Qwen3.5-2B · OpenCL GPU
 ```
 
 ## What It Does
@@ -15,10 +15,10 @@ Autonomous mobile penetration testing agent running on Kali NetHunter.
 Nightcrawler is a drop box that thinks for itself. Deploy the phone, walk away, and it:
 
 1. **Cracks WiFi** autonomously (WPA2-PSK, targeted deauth, wordlist attack)
-2. **Maps the network** with stealth nmap scans
-3. **Enumerates services** — SMB shares, web apps, databases, default creds
-4. **Exploits vulnerabilities** and documents impact
-5. **Reports findings** with full command audit trail
+2. **Maps the network** with stealth nmap scans — discovers hosts, ports, MACs
+3. **Enumerates services** — SMB shares, web apps (found a Pi-hole!), SSH versions, DNS
+4. **Probes with diverse tools** — nmap, curl, smbclient, dig, netcat, telnet
+5. **Reports findings** with full command audit trail + exportable JSON for Thor
 
 All reasoning is done by a local Qwen3.5-2B model running on the phone's GPU via llama.cpp + OpenCL. No cloud, no API keys, no cellular needed.
 
@@ -26,7 +26,7 @@ All reasoning is done by a local Qwen3.5-2B model running on the phone's GPU via
 
 - **Phone:** OnePlus 8 (Snapdragon 865, Adreno 650 GPU, 12GB RAM)
 - **OS:** Android 12 + Kali NetHunter chroot
-- **Model:** Qwen3.5-2B Q8_0 — 4.8 tokens/sec generation on GPU
+- **Model:** Qwen3.5-2B Q8_0 — 4.8 tokens/sec on GPU, 8192 ctx
 - **Optional:** NVIDIA AGX Thor (128GB) for advanced reasoning over Tailscale
 
 ## Quick Start
@@ -35,15 +35,20 @@ All reasoning is done by a local Qwen3.5-2B model running on the phone's GPU via
 # Install (inside Kali chroot)
 bash INSTALL.sh
 
-# Dry-run test (no real commands executed)
-cd /opt/nightcrawler
-NC_DRY_RUN=1 python3 main.py
+# Wait for llama-server (~23min after boot)
+curl -s http://127.0.0.1:8080/health
 
-# Full launch in tmux session
-bash /opt/nightcrawler/scripts/launch.sh
+# Start services
+python3 kali_executor.py --port 5000 &
+python3 scope_proxy.py --config config.yaml --port 8800 --upstream http://127.0.0.1:5000 &
+bash scripts/webui-daemon.sh start
+python3 main.py &
+
+# Or use the 36h tmux launcher
+bash scripts/run-36h.sh
 
 # Web UI (from any device on Tailscale)
-# Open http://<tailscale-ip>:8888
+# https://kali.taileba694.ts.net:8888
 ```
 
 ## Architecture
@@ -56,11 +61,11 @@ Agent Loop (main.py)
 Scope Enforcement Proxy (:8800)
   │  Validates IPs, blocks destructive cmds, rate limits, audit logs
   ▼
-kali-server-mcp (:5000)
-  │  Official Kali MCP — raw terminal execution
+kali_executor.py (:5000)
+  │  Real shell execution via subprocess
   ▼
 Kali Linux
-    nmap, aircrack-ng, hydra, nxc, gobuster, sqlmap, ...
+    nmap, curl, smbclient, nxc, gobuster, dig, hydra, ...
 ```
 
 See `docs/ARCHITECTURE.md` for the full system design.
@@ -69,36 +74,66 @@ See `docs/ARCHITECTURE.md` for the full system design.
 
 - **Fully autonomous** — no human in the loop during operation
 - **Scope-enforced** — two-layer defense prevents out-of-scope actions
-- **Stealth-aware** — configurable scan rates, jitter, targeted deauths
-- **Air-gap capable** — operates with zero connectivity until WiFi is cracked
-- **Persistent** — tmux session survives screen-off, reconnect via SSH
-- **Auditable** — every command logged to `commands.jsonl` with reasoning
-- **Web dashboard** — real-time view via browser (Tailscale only)
-- **Thor offload** — optional, agent works standalone without it
+- **Multi-network** — data tagged by network CIDR, persists across deployments
+- **MAC-keyed hosts** — tracks devices by MAC address, survives DHCP changes
+- **SQLite backend** — efficient storage with WAL mode for concurrent access
+- **Interactive web dashboard** — clickable hosts, port details, scan history, network selector
+- **Thor export** — `/api/export/<network>` JSON endpoint for offloading to AGX
+- **Self-healing** — garbage detection, context reset, duplicate command detection
+- **Auditable** — every command logged to SQLite + JSONL with reasoning
+- **Memory efficient** — agent RSS ~35-50MB, no memory leak
+
+## Tested Results (36h autonomous run)
+
+From the first 36-hour test on a home network (192.168.1.0/24):
+
+- **28 hosts discovered** via ping sweep
+- **5 hosts with open ports** enumerated in detail
+- **Key finding:** 192.168.1.2 is a Raspberry Pi running:
+  - **Pi-hole** DNS sinkhole (identified from HTTP response)
+  - **Samba 4.17.12-Debian** with null-session accessible shares
+  - **OpenSSH 9.2p1 Debian**
+  - 7 open ports: SSH, DNS, HTTP, HTTPS, SMB, NetBIOS, VNC
+- **132+ commands** executed autonomously
+- **Tools used:** nmap, curl, smbclient, dig, telnet, netcat, ssh
+- Agent RSS stable at 35-50MB throughout (no memory leak)
 
 ## Project Structure
 
 ```
 nightcrawler/
-├── main.py              # Entry point
+├── main.py              # Entry point (phase-aware startup)
 ├── config.yaml          # Mission scope + model config
 ├── scope_proxy.py       # Scope enforcement proxy
+├── kali_executor.py     # Real command executor (subprocess)
 ├── INSTALL.sh           # Nightcrawler installer
-├── agent/               # Decision loop, planner, LLM client, watchdog
+├── agent/
+│   ├── loop.py          # Core decision loop + error recovery
+│   ├── planner.py       # Phase state machine
+│   ├── llm_client.py    # llama.cpp / Thor API client
+│   ├── context.py       # Sliding window context manager
+│   ├── watchdog.py      # Mission timer
+│   ├── mission_log.py   # Findings tracking (SQLite-backed)
+│   └── db.py            # SQLite backend (MAC-keyed, multi-network)
 ├── proxy/               # IP validation, rate limiting, command filter
+├── prompts/             # Hot-reloadable prompt files (edit to tune)
+│   ├── system.md        # System prompt template
+│   ├── phase1_recon.md  # Recon phase guidance
+│   ├── phase2_enumerate.md  # Enumeration guidance
+│   └── ...
 ├── ui/                  # Terminal TUI (matrix rain, panels)
-├── webui/               # Web dashboard (Flask + SSE)
-├── simulation/          # Mock server + dry-run scenarios
-├── scripts/             # launch, start, stop, wipe, install
-├── models/              # .gguf files (gitignored)
+├── webui/               # Web dashboard (Flask, SQLite-backed)
+├── scripts/
+│   ├── run-36h.sh       # Sustained run with crash recovery
+│   ├── health-check.sh  # Cron health monitor
+│   ├── start-llm.sh     # Start llama-server on GPU
+│   ├── webui-daemon.sh  # WebUI daemon management
+│   ├── launch.sh        # tmux session launcher
+│   └── ...
 ├── logs/                # Mission data (gitignored)
-├── patches/             # llama.cpp OpenCL patches for Adreno 650
-├── docs/                # Architecture, GPU commands, GPU setup reference
-│   ├── ARCHITECTURE.md
-│   ├── COMMANDS.md
-│   ├── README-GPU.md    # GPU inference docs (OpenCL/Adreno setup)
-│   └── INSTALL-GPU.sh   # GPU/OpenCL setup script (Termux + llama.cpp)
-└── backups/             # Magisk module configs
+├── models/              # .gguf files (gitignored)
+├── patches/             # llama.cpp OpenCL patches
+└── docs/                # Architecture, GPU setup
 ```
 
 ## Configuration
@@ -108,15 +143,15 @@ Edit `config.yaml` before deployment:
 ```yaml
 mission:
   scope:
-    networks: ["192.168.0.0/16", "10.0.0.0/8"]
-    excluded_hosts: ["192.168.1.1"]      # gateway
-    excluded_ports: [502, 503]            # SCADA
-  max_runtime_hours: 8
+    networks: ["192.168.1.0/24"]
+    excluded_hosts: ["192.168.1.1", "192.168.1.53"]  # gateway + self
+    excluded_ports: [502, 503]
+  max_runtime_hours: 36
 
-stealth:
-  scan_rate_per_min: 50
-  cred_spray_rate_per_min: 10
-  jitter_range_ms: [200, 2000]
+model:
+  local:
+    ctx_size: 8192
+    port: 8080
 ```
 
 ## GPU Performance
@@ -128,7 +163,7 @@ stealth:
 | Qwen3.5-4B | Q4_0 | 10.1 t/s | 2.0 t/s |
 
 All via OpenCL on Adreno 650 with Qualcomm driver v819.2.
-See `docs/README-GPU.md` for the full GPU inference story and `docs/INSTALL-GPU.sh` for the OpenCL/Termux setup.
+See `docs/README-GPU.md` for GPU setup and `docs/INSTALL-GPU.sh` for the build script.
 
 ## License
 

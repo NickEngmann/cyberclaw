@@ -269,18 +269,54 @@ See `config.yaml` for full reference. Key sections:
 
 ## Memory Footprint
 
-~2.74GB model + ~0.3GB KV cache @ 4096 ctx = **~3.04GB** on GPU.
-Remaining ~9GB available for Kali tools, proxy, web UI, and OS.
+~2.74GB model + ~0.6GB KV cache @ 8192 ctx = **~3.34GB** on GPU.
+Android system uses ~5GB. Agent Python processes use ~50MB total.
+Remaining ~3.5GB for Kali tools, nmap processes, and OS cache.
+
+**CRITICAL:** Never run two llama-server processes simultaneously.
+Dual instances caused an OOM crash (2× ~3GB = phone reboot).
+
+---
+
+## Data Storage (SQLite v2)
+
+All findings stored in `logs/nightcrawler.db` with WAL mode:
+- **Hosts** keyed by MAC address (survives DHCP changes)
+- **Network-scoped** — all data tagged with network CIDR
+- **Networks table** — tracks discovered networks with SSID/gateway
+- **Backward compat** — still writes findings.json + timeline.jsonl
+
+Export for Thor: `GET /api/export/<network>` returns full JSON.
+
+---
+
+## 2B Model Tuning Lessons (from 36h test)
+
+The Qwen3.5-2B model required extensive tuning to produce reliable commands:
+
+| Parameter | Final Value | Why |
+|-----------|-------------|-----|
+| Temperature | 0.2 | Higher values increase garbage rate |
+| max_tokens | 200 | Less = truncated commands, more = verbose garbage |
+| Context budget | 6000 tokens | Of 8192 total, leaves room for system prompt |
+| Few-shot seed | Phase-aware | RECON: nmap example, ENUMERATE: curl example |
+| Garbage reset | 5-streak | Clears context after 5 consecutive failures |
+| Dup detection | 2-in-5 | Forces tool/target diversification |
+
+**Key insight:** The 2B model follows few-shot examples, not instructions.
+System prompt text ("DO NOT run nmap") is ignored, but a curl example in
+the conversation seed causes it to produce curl commands.
 
 ---
 
 ## Roadmap
 
 ```
-v0.1  Core agent loop + TUI + web UI + dry-run + scope proxy
-v0.2  Full recon/enum phases + Thor handoff + error handling
+v0.1  ✅ Core agent loop + TUI + web UI + scope proxy + real execution
+v0.2  ✅ Full recon/enum phases + SQLite + multi-network + MAC-keyed hosts
 v0.3  Exploit phase + credential spraying + multi-SSID
-v0.4  Fallback recovery + playbook engine
+v0.4  Passive capture (tcpdump/tshark) for MAC/hostname discovery
 v0.5  Thor-side report generation pipeline
+v0.6  Larger model support (4B Q4_0 at 2.0 t/s)
 v1.0  Field-tested, stable release
 ```
