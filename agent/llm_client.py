@@ -42,7 +42,7 @@ class LLMClient:
         payload = {
             "messages": messages,
             "temperature": 0.2,
-            "max_tokens": 150,
+            "max_tokens": 200,
         }
         if model:
             payload["model"] = model

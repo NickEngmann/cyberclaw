@@ -54,7 +54,7 @@ class AgentLoop:
         # ping sweep results so it targets live hosts immediately
         self.context.append_user("Scan the network.")
         self.context.append_assistant(
-            "REASONING: Starting with a ping sweep to discover live hosts.\n"
+            "REASONING: Ping sweep for live hosts.\n"
             "COMMAND: nmap -sn -T2 192.168.1.0/24"
         )
         # Run a real quick ping sweep — extract just IPs to save tokens
