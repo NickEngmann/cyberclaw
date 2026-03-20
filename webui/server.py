@@ -325,12 +325,13 @@ def api_networks():
 
 @app.route("/api/networks/<network_id>", methods=["PATCH"])
 def api_edit_network(network_id):
-    """Edit network name and notes."""
+    """Edit network name, notes, and add observations."""
     if not _HAS_DB or not _db.DB_PATH:
         return jsonify({"error": "DB not available"}), 500
     data = request.json or {}
     name = data.get("name")
     notes = data.get("notes")
+    observation = data.get("observation")
 
     if name is not None:
         names = _db.get_state("network_names", {})
@@ -342,7 +343,24 @@ def api_edit_network(network_id):
         net_notes[network_id] = notes
         _db.set_state("network_notes", net_notes)
 
+    if observation:
+        try:
+            from agent.host_memory import add_network_observation
+            add_network_observation(network_id, observation, source="analyst")
+        except Exception:
+            pass
+
     return jsonify({"ok": True, "network_id": network_id})
+
+
+@app.route("/api/networks/<network_id>/memory")
+def api_network_memory(network_id):
+    """Get network-level memory (observations, scanned IPs)."""
+    try:
+        from agent.host_memory import get_network_memory
+        return jsonify(get_network_memory(network_id))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ── Training Data Endpoints ───────────────────────────────

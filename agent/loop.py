@@ -219,6 +219,13 @@ class AgentLoop:
                 if memory_ctx:
                     system += f"\n{memory_ctx}"
 
+                # Add network memory (scanned IPs, observations)
+                net_id = getattr(self.mission_log, 'network_id', '')
+                if net_id:
+                    net_ctx = host_memory.build_network_prompt_context(net_id, max_tokens=100)
+                    if net_ctx:
+                        system += f"\n{net_ctx}"
+
                 messages = self.context.get_messages()
 
                 # Call LLM
@@ -332,11 +339,15 @@ class AgentLoop:
                         except Exception:
                             pass  # never let training capture crash the agent
 
-                    # Auto-extract host observations into memory
+                    # Auto-extract host observations + track scanned IPs
                     try:
                         import re as _re
                         ips_in_cmd = _re.findall(r'192\.168\.1\.\d+', command)
+                        net_id = getattr(self.mission_log, 'network_id', '')
                         for ip in set(ips_in_cmd):
+                            # Track IP as scanned at network level
+                            if net_id:
+                                host_memory.mark_ip_scanned(net_id, ip)
                             # Look up MAC for this IP
                             mac = ""
                             try:

@@ -593,10 +593,19 @@
                     <label style="color:var(--text-dim); font-size:11px; display:block; margin-bottom:3px;">DISPLAY NAME</label>
                     <input type="text" id="net-edit-name" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--green); padding:6px 8px; font-family:inherit; font-size:13px;" placeholder="e.g. Client Office A">
                 </div>
-                <div style="margin-bottom:15px;">
+                <div style="margin-bottom:12px;">
                     <label style="color:var(--text-dim); font-size:11px; display:block; margin-bottom:3px;">NOTES</label>
-                    <textarea id="net-edit-notes" rows="4" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 8px; font-family:inherit; font-size:12px; resize:vertical;" placeholder="Analyst notes about this network..."></textarea>
+                    <textarea id="net-edit-notes" rows="3" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 8px; font-family:inherit; font-size:12px; resize:vertical;" placeholder="Analyst notes about this network..."></textarea>
                 </div>
+                <div style="margin-bottom:12px;">
+                    <label style="color:var(--text-dim); font-size:11px; display:block; margin-bottom:3px;">OBSERVATIONS (auto + analyst)</label>
+                    <div id="net-edit-obs" style="max-height:120px; overflow-y:auto; font-size:11px; color:var(--text-dim); margin-bottom:6px;"></div>
+                    <div style="display:flex; gap:4px;">
+                        <input type="text" id="net-edit-obs-input" onclick="event.stopPropagation()" placeholder="Add observation..." style="flex:1; background:var(--bg); border:1px solid var(--border); color:var(--green); padding:3px 6px; font-family:inherit; font-size:11px;">
+                        <button onclick="addNetObservation()" style="background:var(--bg); border:1px solid var(--border); color:var(--green); padding:3px 8px; cursor:pointer; font-size:11px;">+</button>
+                    </div>
+                </div>
+                <div id="net-edit-scanned" style="margin-bottom:12px; font-size:10px; color:var(--text-dim);"></div>
                 <button onclick="saveNetEdit()" style="background:var(--green-dim); border:1px solid var(--green); color:var(--green); padding:6px 16px; cursor:pointer; font-family:inherit; font-size:13px; width:100%;">SAVE</button>
             </div>
         </div>
@@ -1171,6 +1180,37 @@
             document.getElementById('net-edit-name').value = net.display_name || net.ssid || '';
             document.getElementById('net-edit-notes').value = net.notes || '';
             document.getElementById('net-edit-modal').style.display = 'flex';
+            // Load network memory
+            fetch('/api/networks/' + encodeURIComponent(editingNetworkId) + '/memory')
+                .then(r => r.json()).then(mem => {
+                    const obsEl = document.getElementById('net-edit-obs');
+                    const obs = mem.observations || [];
+                    if (obs.length === 0) {
+                        obsEl.innerHTML = '<div style="color:var(--text-dim)">No observations yet</div>';
+                    } else {
+                        obsEl.innerHTML = obs.map(o =>
+                            `<div style="padding:1px 0;color:${o.source==='analyst'?'var(--yellow)':'var(--text-dim)'}">[${esc(o.source)}] ${esc(o.text)}</div>`
+                        ).join('');
+                    }
+                    const scanned = mem.scanned_ips || [];
+                    document.getElementById('net-edit-scanned').textContent =
+                        scanned.length ? `Scanned IPs (${scanned.length}): ${scanned.join(', ')}` : '';
+                }).catch(() => {});
+        }
+        async function addNetObservation() {
+            const input = document.getElementById('net-edit-obs-input');
+            if (!input || !input.value.trim() || !editingNetworkId) return;
+            await fetch('/api/networks/' + encodeURIComponent(editingNetworkId), {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({observation: input.value.trim()})
+            });
+            input.value = '';
+            openNetEdit({network_id: editingNetworkId, cidr: document.getElementById('net-edit-cidr').textContent,
+                gateway_mac: document.getElementById('net-edit-mac').textContent,
+                public_ip: document.getElementById('net-edit-pubip').textContent,
+                display_name: document.getElementById('net-edit-name').value,
+                notes: document.getElementById('net-edit-notes').value});
         }
         function closeNetEdit() {
             document.getElementById('net-edit-modal').style.display = 'none';

@@ -211,4 +211,66 @@ def export_memories() -> dict:
     return {
         "export_time": _ts(),
         "host_memories": get_all_memories(),
+        "network_memories": get_all_network_memories(),
     }
+
+
+# ── Network-level memories ───────────────────────────
+
+def get_all_network_memories() -> dict:
+    """Get all network memories. Key is network_id."""
+    return db.get_state("network_memories", {})
+
+
+def get_network_memory(network_id: str) -> dict:
+    """Get memory for a specific network."""
+    memories = get_all_network_memories()
+    return memories.get(network_id, {})
+
+
+def add_network_observation(network_id: str, text: str,
+                            source: str = "agent"):
+    """Add an observation to a network's memory."""
+    memories = get_all_network_memories()
+    if network_id not in memories:
+        memories[network_id] = {
+            "network_id": network_id, "observations": [],
+            "scanned_ips": [], "tags": [],
+        }
+    existing = [o["text"] for o in memories[network_id].get("observations", [])]
+    if text not in existing:
+        memories[network_id]["observations"].append({
+            "source": source, "text": text, "ts": _ts()
+        })
+        memories[network_id]["last_updated"] = _ts()
+        db.set_state("network_memories", memories)
+
+
+def mark_ip_scanned(network_id: str, ip: str):
+    """Track that an IP has been scanned on this network."""
+    memories = get_all_network_memories()
+    if network_id not in memories:
+        memories[network_id] = {
+            "network_id": network_id, "observations": [],
+            "scanned_ips": [], "tags": [],
+        }
+    if ip not in memories[network_id].get("scanned_ips", []):
+        memories[network_id].setdefault("scanned_ips", []).append(ip)
+        memories[network_id]["last_updated"] = _ts()
+        db.set_state("network_memories", memories)
+
+
+def build_network_prompt_context(network_id: str, max_tokens: int = 100) -> str:
+    """Build compact network context for the LLM."""
+    mem = get_network_memory(network_id)
+    if not mem:
+        return ""
+    parts = []
+    scanned = mem.get("scanned_ips", [])
+    if scanned:
+        parts.append(f"Scanned IPs: {', '.join(scanned[-10:])}")
+    for o in mem.get("observations", [])[-3:]:
+        parts.append(o["text"][:60])
+    if not parts:
+        return ""
+    return "NETWORK CONTEXT:\n  " + "\n  ".join(parts)

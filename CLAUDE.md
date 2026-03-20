@@ -97,17 +97,29 @@ Switched from custom `kali_executor.py` to the official `kali-server-mcp` packag
 - **Proxy translation**: Maps to `{status, output, return_code}` for the agent
 - `kali_executor.py` still exists as a fallback but is not used in production
 
-## Host Memory System
-The agent auto-generates observations from scan results and injects them
-into the system prompt (capped at 200 tokens) to prevent repeating dead-end
-approaches. Red teamers can add/edit observations via the web UI.
+## Memory System (Host + Network)
+The agent auto-generates observations and injects them into the system prompt.
+Context resets after each command — memories provide persistent knowledge.
 
+### Host Memory (per-host)
 - **Auto-extracted**: HTTP servers, SSH versions, SMB shares, filtered ports
 - **Status**: unknown → interesting → compromised (or dead-end)
 - **Tags**: auto-generated (pi-hole, ssh, smb, dns)
-- **Avoid tools**: per-host tool exclusions
-- **Exportable**: `GET /api/hosts/memories/export` for Thor
+- **Injected**: HOST MEMORY section in system prompt (max 200 tokens)
 - **Editable**: Click host → MEMORY section → add observations, set status
+- **API**: `GET/PATCH /api/hosts/<mac>/memory`, `GET /api/hosts/memories/export`
+
+### Network Memory (per-network)
+- **Scanned IPs**: tracks which IPs have been probed (prevents re-scanning)
+- **Observations**: auto + analyst (e.g., "Network has Pi-hole at .2")
+- **Injected**: NETWORK CONTEXT section in system prompt (max 100 tokens)
+- **Editable**: Click network ✎ → OBSERVATIONS section + add input
+- **API**: `GET /api/networks/<id>/memory`, `PATCH /api/networks/<id>`
+
+### Context Reset Strategy
+Context is cleared after each successful command. The system prompt is rebuilt
+fresh each turn with: phase prompt + host memory + network memory + C2 controls.
+This prevents context pollution while maintaining persistent knowledge.
 
 ## C2 Interactive Features (Web UI)
 The web UI at `:8888` has full C2 controls:
