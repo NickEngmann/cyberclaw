@@ -1,21 +1,24 @@
-"""SQLite-backed persistent storage for findings, timeline, and commands.
+"""SQLite-backed persistent storage — multi-network, MAC-keyed hosts.
 
-Replaces JSON/JSONL files with a single nightcrawler.db that the OS
-pages efficiently. All processes can read/write concurrently via WAL mode.
+Schema v2: hosts keyed by MAC address, network-scoped data,
+networks table for multi-network support.
 """
 
 import sqlite3
 import json
 import os
+import re
 import time
 import threading
+import ipaddress
 
 _local = threading.local()
 DB_PATH = None
+SCHEMA_VERSION = 2
 
 
 def init_db(log_dir: str):
-    """Initialize the database. Call once at startup."""
+    """Initialize the database with schema v2."""
     global DB_PATH
     os.makedirs(log_dir, exist_ok=True)
     DB_PATH = os.path.join(log_dir, "nightcrawler.db")
@@ -24,13 +27,27 @@ def init_db(log_dir: str):
         PRAGMA journal_mode=WAL;
         PRAGMA synchronous=NORMAL;
 
+        CREATE TABLE IF NOT EXISTS networks (
+            cidr TEXT PRIMARY KEY,
+            first_seen TEXT,
+            last_seen TEXT,
+            ssid TEXT DEFAULT '',
+            gateway TEXT DEFAULT ''
+        );
+
         CREATE TABLE IF NOT EXISTS hosts (
-            ip TEXT PRIMARY KEY,
+            mac TEXT PRIMARY KEY,
+            ip TEXT DEFAULT '',
+            hostname TEXT DEFAULT '',
+            network TEXT DEFAULT '',
             ports TEXT DEFAULT '[]',
+            services TEXT DEFAULT '{}',
             info TEXT DEFAULT '',
             first_seen TEXT,
             last_seen TEXT
         );
+        CREATE INDEX IF NOT EXISTS idx_hosts_network ON hosts(network);
+        CREATE INDEX IF NOT EXISTS idx_hosts_ip ON hosts(ip);
 
         CREATE TABLE IF NOT EXISTS credentials (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,6 +55,7 @@ def init_db(log_dir: str):
             username TEXT,
             password TEXT,
             host TEXT,
+            network TEXT DEFAULT '',
             timestamp TEXT
         );
 
@@ -47,6 +65,7 @@ def init_db(log_dir: str):
             service TEXT,
             vuln TEXT,
             severity TEXT DEFAULT 'medium',
+            network TEXT DEFAULT '',
             timestamp TEXT
         );
 
@@ -56,7 +75,8 @@ def init_db(log_dir: str):
             reasoning TEXT,
             command TEXT,
             status TEXT,
-            output_preview TEXT
+            output_preview TEXT,
+            network TEXT DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS commands (
@@ -65,7 +85,8 @@ def init_db(log_dir: str):
             command TEXT,
             allowed INTEGER,
             reason TEXT,
-            result_status TEXT
+            result_status TEXT,
+            network TEXT DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS state (
@@ -75,9 +96,78 @@ def init_db(log_dir: str):
     """)
     conn.commit()
 
+    # Run migration if needed
+    version = get_state("schema_version", 0)
+    if version < SCHEMA_VERSION:
+        _migrate_v2(conn, log_dir)
+        set_state("schema_version", SCHEMA_VERSION)
+
+
+def _migrate_v2(conn, log_dir: str):
+    """Migrate v1 data (IP-keyed hosts) to v2 (MAC-keyed)."""
+    # Check if old IP-keyed data exists
+    try:
+        rows = conn.execute(
+            "SELECT ip, ports, info, first_seen, last_seen FROM hosts "
+            "WHERE mac = ip OR mac LIKE 'unknown-%'"
+        ).fetchall()
+    except Exception:
+        rows = []
+
+    # Also try importing from findings.json
+    findings_path = os.path.join(log_dir, "findings.json")
+    if os.path.exists(findings_path):
+        try:
+            with open(findings_path) as f:
+                data = json.load(f)
+            if data.get("wifi_connected"):
+                set_state("wifi_connected", True)
+            for h in data.get("hosts", []):
+                ip = h["ip"]
+                info = h.get("info", "")
+                mac = _extract_mac(info) or f"unknown-{ip}"
+                hostname = ""
+                ports = h.get("ports", [])
+                network = _ip_to_network(ip)
+                _upsert_host_raw(conn, mac, ip, hostname, network,
+                                 ports, info)
+            for c in data.get("creds", []):
+                conn.execute(
+                    "INSERT INTO credentials (service,username,password,host,timestamp) VALUES (?,?,?,?,?)",
+                    (c["service"], c["username"], c["password"],
+                     c.get("host", ""), time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                )
+            for v in data.get("vulns", []):
+                conn.execute(
+                    "INSERT INTO vulnerabilities (host,service,vuln,severity,timestamp) VALUES (?,?,?,?,?)",
+                    (v["host"], v["service"], v["vuln"],
+                     v.get("severity", "medium"),
+                     time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                )
+            conn.commit()
+        except (json.JSONDecodeError, IOError, KeyError):
+            pass
+
+
+def _extract_mac(info: str) -> str:
+    """Extract MAC address from info string like 'MAC:AA:BB:CC:DD:EE:FF (Vendor)'."""
+    match = re.search(r'MAC:([0-9A-Fa-f:]{17})', info)
+    if match:
+        return match.group(1).upper()
+    return ""
+
+
+def _ip_to_network(ip: str) -> str:
+    """Derive /24 network from an IP."""
+    try:
+        addr = ipaddress.ip_address(ip)
+        net = ipaddress.ip_network(f"{ip}/24", strict=False)
+        return str(net)
+    except ValueError:
+        return ""
+
 
 def _get_conn() -> sqlite3.Connection:
-    """Get a thread-local connection."""
     if not hasattr(_local, 'conn') or _local.conn is None:
         _local.conn = sqlite3.connect(DB_PATH, timeout=10)
         _local.conn.row_factory = sqlite3.Row
@@ -88,144 +178,249 @@ def _ts() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-# ── Hosts ────────────────────────────────────────────
+# ── Networks ─────────────────────────────────────────
 
-def upsert_host(ip: str, ports: list = None, info: str = ""):
-    """Insert or update a host, merging ports."""
+def upsert_network(cidr: str, ssid: str = "", gateway: str = ""):
     conn = _get_conn()
-    existing = conn.execute("SELECT ports, info FROM hosts WHERE ip=?", (ip,)).fetchone()
+    existing = conn.execute("SELECT cidr FROM networks WHERE cidr=?", (cidr,)).fetchone()
     if existing:
-        old_ports = json.loads(existing["ports"])
-        merged = list(set(old_ports + (ports or [])))
-        merged.sort()
-        new_info = info if info and len(info) > len(existing["info"]) else existing["info"]
-        conn.execute(
-            "UPDATE hosts SET ports=?, info=?, last_seen=? WHERE ip=?",
-            (json.dumps(merged), new_info, _ts(), ip)
-        )
+        updates = ["last_seen=?"]
+        params = [_ts()]
+        if ssid:
+            updates.append("ssid=?")
+            params.append(ssid)
+        if gateway:
+            updates.append("gateway=?")
+            params.append(gateway)
+        params.append(cidr)
+        conn.execute(f"UPDATE networks SET {','.join(updates)} WHERE cidr=?", params)
     else:
-        conn.execute(
-            "INSERT INTO hosts (ip, ports, info, first_seen, last_seen) VALUES (?,?,?,?,?)",
-            (ip, json.dumps(ports or []), info, _ts(), _ts())
-        )
+        conn.execute("INSERT INTO networks (cidr,first_seen,last_seen,ssid,gateway) VALUES (?,?,?,?,?)",
+                     (cidr, _ts(), _ts(), ssid, gateway))
     conn.commit()
 
 
-def get_hosts() -> list:
+def get_networks() -> list:
     conn = _get_conn()
-    rows = conn.execute("SELECT ip, ports, info FROM hosts ORDER BY ip").fetchall()
-    return [{"ip": r["ip"], "ports": json.loads(r["ports"]), "info": r["info"]} for r in rows]
+    rows = conn.execute("SELECT cidr, ssid, gateway, first_seen, last_seen FROM networks ORDER BY cidr").fetchall()
+    return [dict(r) for r in rows]
 
 
-def get_host_count() -> int:
+# ── Hosts ────────────────────────────────────────────
+
+def _upsert_host_raw(conn, mac, ip, hostname, network, ports, info):
+    """Low-level upsert without commit (for batch operations)."""
+    existing = conn.execute("SELECT ports, info, hostname FROM hosts WHERE mac=?", (mac,)).fetchone()
+    if existing:
+        old_ports = json.loads(existing["ports"])
+        merged = sorted(set(old_ports + (ports or [])))
+        new_info = info if info and len(info) > len(existing["info"]) else existing["info"]
+        new_hostname = hostname or existing["hostname"] or ""
+        conn.execute(
+            "UPDATE hosts SET ip=?, hostname=?, network=?, ports=?, info=?, last_seen=? WHERE mac=?",
+            (ip, new_hostname, network, json.dumps(merged), new_info, _ts(), mac)
+        )
+    else:
+        conn.execute(
+            "INSERT INTO hosts (mac,ip,hostname,network,ports,info,first_seen,last_seen) VALUES (?,?,?,?,?,?,?,?)",
+            (mac, ip, hostname, network, json.dumps(ports or []), info, _ts(), _ts())
+        )
+
+
+def upsert_host(ip: str, ports: list = None, info: str = "",
+                mac: str = "", hostname: str = "", network: str = ""):
+    """Insert or update a host. MAC is preferred key, falls back to IP."""
     conn = _get_conn()
+    if not mac:
+        mac = _extract_mac(info) or f"unknown-{ip}"
+    if not network:
+        network = _ip_to_network(ip)
+
+    # Also check if this IP exists under a different MAC (IP changed)
+    if mac.startswith("unknown-"):
+        existing_by_ip = conn.execute(
+            "SELECT mac FROM hosts WHERE ip=? AND mac NOT LIKE 'unknown-%'", (ip,)
+        ).fetchone()
+        if existing_by_ip:
+            mac = existing_by_ip["mac"]
+
+    _upsert_host_raw(conn, mac, ip, hostname, network, ports or [], info)
+    conn.commit()
+
+    # Ensure network exists
+    if network:
+        upsert_network(network)
+
+
+def get_hosts(network: str = None) -> list:
+    conn = _get_conn()
+    if network:
+        rows = conn.execute(
+            "SELECT mac, ip, hostname, network, ports, info, first_seen, last_seen "
+            "FROM hosts WHERE network=? ORDER BY ip", (network,)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT mac, ip, hostname, network, ports, info, first_seen, last_seen "
+            "FROM hosts ORDER BY ip"
+        ).fetchall()
+    return [{"mac": r["mac"], "ip": r["ip"], "hostname": r["hostname"],
+             "network": r["network"], "ports": json.loads(r["ports"]),
+             "info": r["info"], "first_seen": r["first_seen"],
+             "last_seen": r["last_seen"]} for r in rows]
+
+
+def get_host_count(network: str = None) -> int:
+    conn = _get_conn()
+    if network:
+        return conn.execute("SELECT COUNT(*) FROM hosts WHERE network=?", (network,)).fetchone()[0]
     return conn.execute("SELECT COUNT(*) FROM hosts").fetchone()[0]
 
 
-def get_total_ports() -> int:
+def get_total_ports(network: str = None) -> int:
     conn = _get_conn()
-    rows = conn.execute("SELECT ports FROM hosts").fetchall()
+    if network:
+        rows = conn.execute("SELECT ports FROM hosts WHERE network=?", (network,)).fetchall()
+    else:
+        rows = conn.execute("SELECT ports FROM hosts").fetchall()
     return sum(len(json.loads(r["ports"])) for r in rows)
+
+
+def get_host_history(ip: str, limit: int = 20) -> list:
+    """Get timeline entries related to a specific host IP."""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT timestamp, reasoning, command, status, output_preview "
+        "FROM timeline WHERE command LIKE ? ORDER BY id DESC LIMIT ?",
+        (f"%{ip}%", limit)
+    ).fetchall()
+    return [dict(r) for r in reversed(rows)]
 
 
 # ── Credentials ──────────────────────────────────────
 
-def add_credential(service: str, username: str, password: str, host: str = ""):
+def add_credential(service: str, username: str, password: str,
+                   host: str = "", network: str = ""):
     conn = _get_conn()
     conn.execute(
-        "INSERT INTO credentials (service, username, password, host, timestamp) VALUES (?,?,?,?,?)",
-        (service, username, password, host, _ts())
+        "INSERT INTO credentials (service,username,password,host,network,timestamp) VALUES (?,?,?,?,?,?)",
+        (service, username, password, host, network, _ts())
     )
     conn.commit()
 
 
-def get_credentials() -> list:
+def get_credentials(network: str = None) -> list:
     conn = _get_conn()
-    rows = conn.execute("SELECT service, username, password, host, timestamp FROM credentials").fetchall()
+    if network:
+        rows = conn.execute("SELECT * FROM credentials WHERE network=?", (network,)).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM credentials").fetchall()
     return [dict(r) for r in rows]
 
 
-def get_cred_count() -> int:
+def get_cred_count(network: str = None) -> int:
     conn = _get_conn()
+    if network:
+        return conn.execute("SELECT COUNT(*) FROM credentials WHERE network=?", (network,)).fetchone()[0]
     return conn.execute("SELECT COUNT(*) FROM credentials").fetchone()[0]
 
 
 # ── Vulnerabilities ──────────────────────────────────
 
-def add_vulnerability(host: str, service: str, vuln: str, severity: str = "medium"):
+def add_vulnerability(host: str, service: str, vuln: str,
+                      severity: str = "medium", network: str = ""):
     conn = _get_conn()
     conn.execute(
-        "INSERT INTO vulnerabilities (host, service, vuln, severity, timestamp) VALUES (?,?,?,?,?)",
-        (host, service, vuln, severity, _ts())
+        "INSERT INTO vulnerabilities (host,service,vuln,severity,network,timestamp) VALUES (?,?,?,?,?,?)",
+        (host, service, vuln, severity, network, _ts())
     )
     conn.commit()
 
 
-def get_vulnerabilities() -> list:
+def get_vulnerabilities(network: str = None) -> list:
     conn = _get_conn()
-    rows = conn.execute("SELECT host, service, vuln, severity, timestamp FROM vulnerabilities").fetchall()
+    if network:
+        rows = conn.execute("SELECT * FROM vulnerabilities WHERE network=?", (network,)).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM vulnerabilities").fetchall()
     return [dict(r) for r in rows]
 
 
-def get_vuln_count() -> int:
+def get_vuln_count(network: str = None) -> int:
     conn = _get_conn()
+    if network:
+        return conn.execute("SELECT COUNT(*) FROM vulnerabilities WHERE network=?", (network,)).fetchone()[0]
     return conn.execute("SELECT COUNT(*) FROM vulnerabilities").fetchone()[0]
 
 
 # ── Timeline ─────────────────────────────────────────
 
 def add_timeline(reasoning: str = None, command: str = None,
-                 status: str = None, output_preview: str = None):
+                 status: str = None, output_preview: str = None,
+                 network: str = ""):
     conn = _get_conn()
     conn.execute(
-        "INSERT INTO timeline (timestamp, reasoning, command, status, output_preview) VALUES (?,?,?,?,?)",
-        (_ts(), reasoning, command, status, (output_preview or "")[:500])
+        "INSERT INTO timeline (timestamp,reasoning,command,status,output_preview,network) VALUES (?,?,?,?,?,?)",
+        (_ts(), reasoning, command, status, (output_preview or "")[:500], network)
     )
     conn.commit()
 
 
-def add_timeline_event(event: str, error: str = None):
-    """Log a non-command event (errors, phase transitions, etc.)."""
+def add_timeline_event(event: str, error: str = None, network: str = ""):
     conn = _get_conn()
     conn.execute(
-        "INSERT INTO timeline (timestamp, reasoning, command, status, output_preview) VALUES (?,?,?,?,?)",
-        (_ts(), f"[{event}]", None, "event", error or "")
+        "INSERT INTO timeline (timestamp,reasoning,command,status,output_preview,network) VALUES (?,?,?,?,?,?)",
+        (_ts(), f"[{event}]", None, "event", error or "", network)
     )
     conn.commit()
 
 
-def get_timeline(limit: int = 50) -> list:
+def get_timeline(limit: int = 50, network: str = None) -> list:
     conn = _get_conn()
-    rows = conn.execute(
-        "SELECT timestamp, reasoning, command, status, output_preview "
-        "FROM timeline ORDER BY id DESC LIMIT ?", (limit,)
-    ).fetchall()
+    if network:
+        rows = conn.execute(
+            "SELECT timestamp, reasoning, command, status, output_preview "
+            "FROM timeline WHERE network=? ORDER BY id DESC LIMIT ?", (network, limit)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT timestamp, reasoning, command, status, output_preview "
+            "FROM timeline ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
     return [dict(r) for r in reversed(rows)]
 
 
-def get_timeline_count() -> int:
+def get_timeline_count(network: str = None) -> int:
     conn = _get_conn()
+    if network:
+        return conn.execute("SELECT COUNT(*) FROM timeline WHERE network=?", (network,)).fetchone()[0]
     return conn.execute("SELECT COUNT(*) FROM timeline").fetchone()[0]
 
 
 # ── Commands (audit log) ─────────────────────────────
 
 def add_command_log(command: str, allowed: bool, reason: str,
-                    result_status: str = None):
+                    result_status: str = None, network: str = ""):
     conn = _get_conn()
     conn.execute(
-        "INSERT INTO commands (timestamp, command, allowed, reason, result_status) VALUES (?,?,?,?,?)",
-        (_ts(), command, int(allowed), reason, result_status)
+        "INSERT INTO commands (timestamp,command,allowed,reason,result_status,network) VALUES (?,?,?,?,?,?)",
+        (_ts(), command, int(allowed), reason, result_status, network)
     )
     conn.commit()
 
 
-def get_commands(limit: int = 100) -> list:
+def get_commands(limit: int = 100, network: str = None) -> list:
     conn = _get_conn()
-    rows = conn.execute(
-        "SELECT timestamp, command, allowed, reason, result_status "
-        "FROM commands ORDER BY id DESC LIMIT ?", (limit,)
-    ).fetchall()
+    if network:
+        rows = conn.execute(
+            "SELECT timestamp, command, allowed, reason, result_status "
+            "FROM commands WHERE network=? ORDER BY id DESC LIMIT ?", (network, limit)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT timestamp, command, allowed, reason, result_status "
+            "FROM commands ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
     return [dict(r) for r in reversed(rows)]
 
 
@@ -233,10 +428,8 @@ def get_commands(limit: int = 100) -> list:
 
 def set_state(key: str, value):
     conn = _get_conn()
-    conn.execute(
-        "INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)",
-        (key, json.dumps(value))
-    )
+    conn.execute("INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)",
+                 (key, json.dumps(value)))
     conn.commit()
 
 
@@ -246,65 +439,33 @@ def get_state(key: str, default=None):
     return json.loads(row["value"]) if row else default
 
 
-# ── Findings summary (replaces findings.json) ────────
+# ── Findings summary ─────────────────────────────────
 
-def get_findings_summary() -> dict:
-    """Get the full findings dict — compatible with the old JSON format."""
+def get_findings_summary(network: str = None) -> dict:
+    """Get findings — optionally scoped to a network."""
     return {
         "wifi_connected": get_state("wifi_connected", False),
-        "live_hosts": get_host_count(),
-        "open_ports": get_total_ports(),
-        "credentials": get_cred_count(),
-        "vulnerabilities": get_vuln_count(),
+        "live_hosts": get_host_count(network),
+        "open_ports": get_total_ports(network),
+        "credentials": get_cred_count(network),
+        "vulnerabilities": get_vuln_count(network),
         "impact_documented": get_state("impact_documented", False),
         "cleanup_done": get_state("cleanup_done", False),
-        "hosts": get_hosts(),
-        "creds": get_credentials(),
-        "vulns": get_vulnerabilities(),
+        "hosts": get_hosts(network),
+        "creds": get_credentials(network),
+        "vulns": get_vulnerabilities(network),
+        "networks": get_networks(),
     }
 
 
-# ── Migration: import existing JSON/JSONL files ─────
+# ── Export for Thor ──────────────────────────────────
 
-def migrate_from_files(log_dir: str):
-    """One-time import of existing log files into SQLite."""
-    import os
-
-    # Import findings.json
-    findings_path = os.path.join(log_dir, "findings.json")
-    if os.path.exists(findings_path):
-        try:
-            with open(findings_path) as f:
-                data = json.load(f)
-            if data.get("wifi_connected"):
-                set_state("wifi_connected", True)
-            for h in data.get("hosts", []):
-                upsert_host(h["ip"], h.get("ports", []), h.get("info", ""))
-            for c in data.get("creds", []):
-                add_credential(c["service"], c["username"], c["password"], c.get("host", ""))
-            for v in data.get("vulns", []):
-                add_vulnerability(v["host"], v["service"], v["vuln"], v.get("severity", "medium"))
-        except (json.JSONDecodeError, IOError, KeyError):
-            pass
-
-    # Import timeline.jsonl
-    timeline_path = os.path.join(log_dir, "timeline.jsonl")
-    if os.path.exists(timeline_path):
-        try:
-            with open(timeline_path) as f:
-                for line in f:
-                    try:
-                        d = json.loads(line.strip())
-                        if d.get("command"):
-                            add_timeline(
-                                reasoning=d.get("reasoning"),
-                                command=d.get("command"),
-                                status=d.get("status"),
-                                output_preview=d.get("output_preview"),
-                            )
-                        elif d.get("event"):
-                            add_timeline_event(d["event"], d.get("error"))
-                    except (json.JSONDecodeError, KeyError):
-                        pass
-        except IOError:
-            pass
+def export_network(network: str = None) -> dict:
+    """Full export of a network's data for Thor consumption."""
+    return {
+        "export_time": _ts(),
+        "network": network or "all",
+        "findings": get_findings_summary(network),
+        "timeline": get_timeline(limit=500, network=network),
+        "commands": get_commands(limit=500, network=network),
+    }

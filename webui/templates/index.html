@@ -213,6 +213,49 @@
             text-transform: uppercase;
         }
 
+        /* Host cards — clickable */
+        .host-card {
+            border: 1px solid var(--border);
+            padding: 8px 12px;
+            margin-bottom: 6px;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+        .host-card:hover { border-color: var(--green-mid); }
+        .host-card.expanded { border-color: var(--green); }
+        .host-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .host-mac { color: var(--text-dim); font-size: 10px; }
+        .host-hostname { color: var(--yellow); font-size: 11px; }
+        .host-detail {
+            display: none;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--border);
+        }
+        .host-card.expanded .host-detail { display: block; }
+        .port-line {
+            padding: 2px 0;
+            font-size: 12px;
+            display: flex;
+            gap: 12px;
+        }
+        .port-num { color: var(--cyan); font-weight: bold; min-width: 50px; }
+        .port-service { color: var(--text); }
+        .port-state { color: var(--green); font-size: 10px; }
+        .host-history {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #111;
+        }
+        .host-history-title { color: var(--text-dim); font-size: 10px; margin-bottom: 4px; }
+        .history-entry { font-size: 11px; color: var(--text-dim); padding: 2px 0; }
+        .history-cmd { color: var(--green); }
+        .host-network { color: var(--text-dim); font-size: 10px; }
+
         /* Cred/vuln entries */
         .cred-entry, .vuln-entry {
             padding: 4px 0;
@@ -328,8 +371,8 @@
                 </div>
             </div>
 
-            <!-- Hosts -->
-            <div class="panel">
+            <!-- Hosts (full width, interactive) -->
+            <div class="panel" style="grid-column: 1 / -1;">
                 <div class="panel-header">
                     DISCOVERED HOSTS <span class="count" id="hosts-count">0</span>
                 </div>
@@ -338,7 +381,7 @@
             </div>
 
             <!-- Credentials & Vulns -->
-            <div class="panel">
+            <div class="panel" style="grid-column: 1 / -1;">
                 <div class="panel-header">
                     CREDENTIALS & VULNS <span class="count" id="cv-count">0</span>
                 </div>
@@ -491,60 +534,131 @@
             return div.innerHTML;
         }
 
-        // Poll findings from disk every 5s (catches data even if agent crashes)
+        // Parse port/service pairs from info string
+        function parseServices(info) {
+            const services = {};
+            if (!info) return services;
+            const parts = info.split(', ');
+            for (const p of parts) {
+                const m = p.match(/^(\d+)\/(\S+)/);
+                if (m) services[parseInt(m[1])] = m[2];
+            }
+            return services;
+        }
+
+        // Render interactive host cards
+        let expandedHost = null;
+
         async function pollFindings() {
             try {
                 const resp = await fetch('/api/findings');
                 const data = await resp.json();
 
-                // Update counters from disk data
                 document.getElementById('f-hosts').textContent = data.live_hosts || 0;
                 document.getElementById('f-creds').textContent = data.credentials || 0;
                 document.getElementById('f-vulns').textContent = data.vulnerabilities || 0;
 
-                // Count total ports across hosts
                 let totalPorts = 0;
                 const hosts = data.hosts || [];
                 for (const h of hosts) totalPorts += (h.ports || []).length;
                 document.getElementById('f-ports').textContent = totalPorts;
 
-                // Update hosts panel from disk
+                // Render host cards
                 const hostsBody = document.getElementById('hosts-body');
                 document.getElementById('hosts-count').textContent = hosts.length;
+
                 if (hosts.length > 0) {
                     hostsBody.innerHTML = '';
                     for (const h of hosts) {
-                        const div = document.createElement('div');
-                        div.className = 'host-entry';
-                        div.innerHTML = `<span class="host-ip">${esc(h.ip)}</span>` +
-                            (h.ports && h.ports.length ? `<br><span class="host-ports">Ports: ${esc(h.ports.join(', '))}</span>` : '') +
-                            (h.info ? `<br><span class="host-info">${esc(h.info)}</span>` : '');
-                        hostsBody.appendChild(div);
+                        const services = parseServices(h.info);
+                        const isExpanded = expandedHost === h.ip;
+                        const card = document.createElement('div');
+                        card.className = 'host-card' + (isExpanded ? ' expanded' : '');
+                        card.onclick = () => { expandedHost = isExpanded ? null : h.ip; pollFindings(); };
+
+                        // Port lines for expanded view
+                        let portLines = '';
+                        for (const port of (h.ports || [])) {
+                            const svc = services[port] || 'unknown';
+                            portLines += `<div class="port-line">
+                                <span class="port-num">${port}/tcp</span>
+                                <span class="port-service">${esc(svc)}</span>
+                                <span class="port-state">open</span>
+                            </div>`;
+                        }
+                        if (!portLines) portLines = '<div style="color:var(--text-dim)">No open ports detected</div>';
+
+                        card.innerHTML = `
+                            <div class="host-card-header">
+                                <div>
+                                    <span class="host-ip">${esc(h.ip)}</span>
+                                    ${h.hostname ? `<span class="host-hostname"> (${esc(h.hostname)})</span>` : ''}
+                                    <span style="color:var(--text-dim); margin-left:8px">${(h.ports||[]).length} ports</span>
+                                </div>
+                                <div>
+                                    <span class="host-mac">${esc(h.mac || '')}</span>
+                                </div>
+                            </div>
+                            <div class="host-detail">
+                                <div style="margin-bottom:4px;color:var(--text-dim);font-size:10px">
+                                    Network: ${esc(h.network || '?')} | First seen: ${esc(h.first_seen || '?')} | Last: ${esc(h.last_seen || '?')}
+                                </div>
+                                ${portLines}
+                                <div class="host-history" id="history-${esc(h.ip)}">
+                                    <div class="host-history-title">SCAN HISTORY</div>
+                                    <div style="color:var(--text-dim);font-size:11px">Loading...</div>
+                                </div>
+                            </div>`;
+                        hostsBody.appendChild(card);
+
+                        // Load history for expanded host
+                        if (isExpanded) {
+                            fetch('/api/host/' + encodeURIComponent(h.ip) + '/history')
+                                .then(r => r.json())
+                                .then(history => {
+                                    const el = document.getElementById('history-' + h.ip);
+                                    if (!el) return;
+                                    let html = '<div class="host-history-title">SCAN HISTORY</div>';
+                                    if (history.length === 0) {
+                                        html += '<div style="color:var(--text-dim);font-size:11px">No history</div>';
+                                    }
+                                    for (const entry of history) {
+                                        const ts = (entry.timestamp || '').split('T')[1]?.split('Z')[0] || '';
+                                        html += `<div class="history-entry">
+                                            <span style="color:var(--text-dim)">${esc(ts)}</span>
+                                            <span class="history-cmd"> ${esc(entry.command || '')}</span>
+                                            <span style="color:${entry.status === 'success' ? 'var(--green)' : 'var(--red)'}"> [${esc(entry.status || '')}]</span>
+                                        </div>`;
+                                    }
+                                    el.innerHTML = html;
+                                }).catch(() => {});
+                        }
                     }
                 }
 
-                // Update creds & vulns from disk
+                // Creds & vulns
                 const creds = data.creds || [];
                 const vulns = data.vulns || [];
-                if (creds.length + vulns.length > 0) {
-                    const cvBody = document.getElementById('cv-body');
-                    document.getElementById('cv-count').textContent = creds.length + vulns.length;
-                    cvBody.innerHTML = '';
-                    for (const c of creds) {
-                        const div = document.createElement('div');
-                        div.className = 'cred-entry';
-                        div.innerHTML = `<span class="cred-service">[${esc(c.service)}]</span> ` +
-                            `<span class="cred-user">${esc(c.username)}</span>:****` +
-                            (c.host ? ` @ ${esc(c.host)}` : '');
-                        cvBody.appendChild(div);
-                    }
-                    for (const v of vulns) {
-                        const div = document.createElement('div');
-                        div.className = 'vuln-entry';
-                        div.innerHTML = `<span class="vuln-severity ${esc(v.severity)}">[${esc(v.severity.toUpperCase())}]</span> ` +
-                            `${esc(v.host)} — ${esc(v.vuln)}`;
-                        cvBody.appendChild(div);
-                    }
+                const cvBody = document.getElementById('cv-body');
+                document.getElementById('cv-count').textContent = creds.length + vulns.length;
+                cvBody.innerHTML = '';
+                if (creds.length + vulns.length === 0) {
+                    cvBody.innerHTML = '<div style="color:var(--text-dim)">No credentials or vulnerabilities found yet</div>';
+                }
+                for (const c of creds) {
+                    const div = document.createElement('div');
+                    div.className = 'cred-entry';
+                    div.innerHTML = `<span class="cred-service">[${esc(c.service)}]</span> ` +
+                        `<span class="cred-user">${esc(c.username)}</span>:****` +
+                        (c.host ? ` @ ${esc(c.host)}` : '');
+                    cvBody.appendChild(div);
+                }
+                for (const v of vulns) {
+                    const div = document.createElement('div');
+                    div.className = 'vuln-entry';
+                    div.innerHTML = `<span class="vuln-severity ${esc(v.severity)}">[${esc(v.severity.toUpperCase())}]</span> ` +
+                        `${esc(v.host)} — ${esc(v.vuln)}`;
+                    cvBody.appendChild(div);
                 }
             } catch (e) { /* ignore */ }
         }

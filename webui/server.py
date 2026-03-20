@@ -256,7 +256,13 @@ def api_commands():
 
 @app.route("/api/timeline")
 def api_timeline():
-    """Return recent timeline entries (reasoning + command pairs)."""
+    """Return recent timeline entries."""
+    if _HAS_DB and _db.DB_PATH:
+        try:
+            return jsonify(_db.get_timeline(50))
+        except Exception:
+            pass
+    # Fallback
     log_dir = os.environ.get("NC_LOG_DIR",
                              os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs"))
     timeline_path = os.path.join(log_dir, "timeline.jsonl")
@@ -269,6 +275,40 @@ def api_timeline():
                 except json.JSONDecodeError:
                     pass
     return jsonify(entries[-50:])
+
+
+@app.route("/api/host/<ip>/history")
+def api_host_history(ip):
+    """Return scan history for a specific host."""
+    if _HAS_DB and _db.DB_PATH:
+        try:
+            return jsonify(_db.get_host_history(ip, limit=20))
+        except Exception:
+            pass
+    return jsonify([])
+
+
+@app.route("/api/export")
+@app.route("/api/export/<path:network>")
+def api_export(network=None):
+    """Export all data for Thor consumption. Optionally filter by network."""
+    if _HAS_DB and _db.DB_PATH:
+        try:
+            return jsonify(_db.export_network(network))
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    return jsonify({"error": "SQLite not available"}), 500
+
+
+@app.route("/api/networks")
+def api_networks():
+    """Return list of discovered networks."""
+    if _HAS_DB and _db.DB_PATH:
+        try:
+            return jsonify(_db.get_networks())
+        except Exception:
+            pass
+    return jsonify([])
 
 
 def get_tailscale_ip() -> str:

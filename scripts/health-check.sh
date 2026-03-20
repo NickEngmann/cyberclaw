@@ -72,6 +72,19 @@ else
     NOTES="${NOTES}agent-down "
 fi
 
+# ── 5b. Agent memory leak detection ──────────────────
+AGENT_PID=$(pgrep -f "python3 main.py" 2>/dev/null | head -1)
+AGENT_RSS=0
+if [ -n "$AGENT_PID" ]; then
+    AGENT_RSS=$(ps -o rss= -p "$AGENT_PID" 2>/dev/null | tr -d ' ')
+    AGENT_RSS_MB=$((AGENT_RSS / 1024))
+    echo "  [INFO] agent RSS: ${AGENT_RSS_MB}MB (PID $AGENT_PID)" >> "$HEALTH_LOG"
+    if [ "$AGENT_RSS_MB" -gt 200 ]; then
+        echo "  [WARN] agent memory leak: ${AGENT_RSS_MB}MB > 200MB" >> "$HEALTH_LOG"
+        NOTES="${NOTES}memleak-${AGENT_RSS_MB}M "
+    fi
+fi
+
 # ── 6. Agent progress (stall detection) ──────────────
 TIMELINE="$LOG_DIR/timeline.jsonl"
 if [ -f "$TIMELINE" ]; then
