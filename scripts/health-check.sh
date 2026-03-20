@@ -17,17 +17,18 @@ SERVICES_FAIL=0
 NOTES=""
 
 # ── 1. llama-server ──────────────────────────────────
-if curl -s http://127.0.0.1:8080/health 2>/dev/null | grep -q "ok"; then
-    echo "  [OK] llama-server :8080" >> "$HEALTH_LOG"
+LLAMA_COUNT=$(pgrep -c llama-server 2>/dev/null || echo 0)
+if [ "$LLAMA_COUNT" -gt 1 ]; then
+    echo "  [CRITICAL] $LLAMA_COUNT llama-server processes! OOM risk!" >> "$HEALTH_LOG"
+    NOTES="${NOTES}DUAL-LLAMA-${LLAMA_COUNT} "
+    SERVICES_FAIL=$((SERVICES_FAIL+1))
+elif curl -s http://127.0.0.1:8080/health 2>/dev/null | grep -q "ok"; then
+    echo "  [OK] llama-server :8080 (${LLAMA_COUNT} proc)" >> "$HEALTH_LOG"
     SERVICES_OK=$((SERVICES_OK+1))
 else
-    echo "  [FAIL] llama-server :8080 — attempting restart" >> "$HEALTH_LOG"
+    echo "  [FAIL] llama-server :8080" >> "$HEALTH_LOG"
     SERVICES_FAIL=$((SERVICES_FAIL+1))
     NOTES="${NOTES}llm-down "
-    # Try restart from Android shell
-    ssh -p 9022 -o ConnectTimeout=5 shell@127.0.0.1 \
-        "bash /data/local/nhsystem/kalifs/root/nightcrawler/scripts/start-llm.sh" \
-        >> "$HEALTH_LOG" 2>&1 &
 fi
 
 # ── 2. Executor ──────────────────────────────────────

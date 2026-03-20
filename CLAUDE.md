@@ -97,6 +97,14 @@ bash scripts/install.sh
 | nethunter (v1.4.0) | Kali chroot + tools |
 | tailscaled | Tailscale VPN |
 
+## CRITICAL: llama-server Rules
+- **NEVER start a second llama-server process** — check `pgrep llama-server` first
+- **NEVER kill llama-server from Kali chroot** — only from Android shell (port 9022)
+- **Context window: 8192 tokens** — do not increase without user approval
+- Dual llama-server processes caused OOM crash on 2026-03-20 (~6GB × 2 = phone reboot)
+- Auto-starts 20 min after boot via Magisk watchdog (with 20 min crash cooldown)
+- Manual start: SSH to port 9022 and run `bash /data/local/nhsystem/kalifs/root/nightcrawler/scripts/start-llm.sh`
+
 ## Known Issues
 - Q4_K_M on GPU: extremely slow (falls back to generic kernels)
 - 4B Q8_0: fails to load (exceeds 1GB per-allocation limit)
@@ -104,7 +112,5 @@ bash scripts/install.sh
 - OpenCL embedded kernels: 60+ min JIT (use non-embedded)
 - `llama-server` runs as root on Android side (not in chroot, not as Termux user)
 - From Kali chroot, the agent reaches it at http://127.0.0.1:8080 (shared network namespace)
-- Auto-starts 20 min after boot via Magisk watchdog (with 20 min crash cooldown)
-- Manual start: SSH to port 9022 and run `bash /data/local/nhsystem/kalifs/root/nightcrawler/scripts/start-llm.sh`
 - WebUI daemon: `bash /root/nightcrawler/scripts/webui-daemon.sh start`
 - WebUI HTTPS: https://kali.taileba694.ts.net:8888 (self-signed cert in certs/)
