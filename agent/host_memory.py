@@ -95,13 +95,34 @@ def set_avoid_tools(mac: str, tools: list):
 def auto_extract_observations(ip: str, mac: str, command: str,
                                output: str, status: str):
     """Auto-generate observations from command results.
-    Called by the agent loop after each successful command."""
-    if status != "success" or not output:
-        # Note dead-ends too
-        if "filtered" in output.lower() or "closed" in output.lower():
-            if "nmap" in command:
-                add_observation(mac, f"Ports filtered/closed (nmap found nothing useful)",
-                                source="agent", ip=ip)
+    Learns from BOTH successes and failures."""
+
+    # Learn from errors — these are valuable intelligence
+    if status == "error" or (status == "success" and not output.strip()):
+        out_lower = (output or "").lower()
+        if "nt_status_io_timeout" in out_lower or "connection timed out" in out_lower:
+            add_observation(mac, f"Connection timeout — host may be firewalled",
+                            source="agent", ip=ip)
+            update_status(mac, "dead-end")
+        elif "host seems down" in out_lower:
+            add_observation(mac, f"Host down (nmap: not responding to probes)",
+                            source="agent", ip=ip)
+            update_status(mac, "dead-end")
+        elif "connection refused" in out_lower:
+            add_observation(mac, f"Connection refused on probed port",
+                            source="agent", ip=ip)
+        elif "filtered" in out_lower:
+            add_observation(mac, f"Ports filtered/closed — skip nmap, try other tools",
+                            source="agent", ip=ip)
+        if not output.strip() and "curl" in command:
+            add_observation(mac, f"curl returned empty — service may not be HTTP",
+                            source="agent", ip=ip)
+        if not output.strip() and "https" in command.lower():
+            add_observation(mac, f"HTTPS failed — try HTTP instead",
+                            source="agent", ip=ip)
+        return
+
+    if status != "success":
         return
 
     observations = []

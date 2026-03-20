@@ -275,6 +275,18 @@ class AgentLoop:
                     push_feed("thought", reasoning)
 
                 if command:
+                    # Skip commands targeting known dead-end hosts
+                    import re as _re
+                    target_ips = _re.findall(r'192\.168\.1\.\d+', command)
+                    if target_ips and all(self._should_skip_host(ip) for ip in target_ips):
+                        push_feed("warning", f"Skipped dead-end host: {target_ips[0]}")
+                        self.context.append_user(
+                            f"{target_ips[0]} is a dead-end (firewalled/down). "
+                            "Pick a DIFFERENT, LIVE host. "
+                            "REASONING: [text] COMMAND: [command]"
+                        )
+                        continue
+
                     # Validate command before execution
                     if not self._is_valid_command(command):
                         self.garbage_streak += 1
@@ -316,7 +328,7 @@ class AgentLoop:
                         push_feed("error", result.get("error", ""))
                     else:
                         output = result.get("output", "")
-                        preview = output[:300] + "..." if len(output) > 300 else output
+                        preview = output[:800] + "..." if len(output) > 800 else output
                         push_feed("result", preview)
 
                     self.total_commands += 1
@@ -377,7 +389,7 @@ class AgentLoop:
                     # persistent knowledge, so we don't need to carry context
                     # about previous hosts. Fresh context = better rotation.
                     self.context.clear()
-                    output_summary = result.get("output", "")[:300]
+                    output_summary = result.get("output", "")[:500]
                     self.context.append_user(
                         f"[LAST COMMAND]: {command}\n"
                         f"[RESULT]: {output_summary}\n\n"
@@ -547,17 +559,41 @@ class AgentLoop:
         """Reject obviously invalid commands before they hit the executor."""
         if not command or len(command) < 2:
             return False
-        # Reject if the command IS a format tag
         cmd_lower = command.lower().strip()
+        # Reject format tags
         if cmd_lower in ('command:', 'reasoning:', 'command', 'reasoning'):
             return False
-        # Reject if starts with backtick (parser missed it)
+        # Reject backtick-prefixed
         if command.startswith('`'):
             return False
-        # Must start with a plausible tool name (letter or /)
+        # Must start with a letter or /
         if not command[0].isalpha() and command[0] != '/':
             return False
+        # Reject fake file paths that don't exist
+        if '/path/to/' in command or '/home/user/' in command:
+            return False
+        # Reject invalid nmap timing (only -T0 through -T5)
+        import re
+        timing = re.search(r'-T(\d+)', command)
+        if timing and int(timing.group(1)) > 5:
+            return False
+        # Enforce stealth: reject -T3, -T4, -T5 for nmap
+        if 'nmap' in cmd_lower and timing and int(timing.group(1)) > 2:
+            return False
         return True
+
+    def _should_skip_host(self, ip: str) -> bool:
+        """Check if a host is known dead-end and should be skipped."""
+        try:
+            for h in db.get_hosts():
+                if h["ip"] == ip:
+                    mem = host_memory.get_memory(h["mac"])
+                    if mem.get("status") == "dead-end":
+                        return True
+                    break
+        except Exception:
+            pass
+        return False
 
     def _is_duplicate(self, command: str) -> bool:
         """Check if same command was run in last 3 turns."""
