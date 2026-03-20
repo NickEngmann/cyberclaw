@@ -1037,11 +1037,13 @@
                 const container = document.getElementById('network-buttons');
                 container.innerHTML = '';
                 for (const n of nets) {
+                    const nid = n.network_id || n.cidr;
                     const btn = document.createElement('button');
-                    btn.className = 'network-btn' + (selectedNetwork === n.cidr ? ' active' : '');
-                    btn.id = 'net-' + n.cidr.replace(/[/.]/g, '-');
-                    btn.textContent = n.cidr + (n.ssid ? ' (' + n.ssid + ')' : '');
-                    btn.onclick = () => selectNetwork(n.cidr);
+                    btn.className = 'network-btn' + (selectedNetwork === nid ? ' active' : '');
+                    btn.id = 'net-' + nid;
+                    btn.textContent = n.ssid ? n.ssid + ' (' + n.cidr + ')' : n.cidr;
+                    if (n.gateway_mac) btn.title = 'Gateway: ' + n.gateway_mac;
+                    btn.onclick = () => selectNetwork(nid);
                     container.appendChild(btn);
                 }
             } catch (e) {}

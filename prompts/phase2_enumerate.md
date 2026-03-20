@@ -11,7 +11,7 @@ DO NOT run nmap again. Instead probe the services directly:
 - curl -sk https://192.168.1.2/
 - curl -s http://192.168.1.25:8888/
 - smbclient -N -L //192.168.1.2/
-- nmap -sV -T2 -p 22,80,445 192.168.1.2
+- nmap -sV -T2 -p 22,80,445 192.168.1.2 (ALWAYS use -T2, never -T4)
 - dig @192.168.1.2 version.bind chaos txt
 
 EXIT: 1+ vulnerability or credential found

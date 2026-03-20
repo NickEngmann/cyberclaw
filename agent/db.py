@@ -218,7 +218,10 @@ def upsert_network(network_id: str = "", cidr: str = "", gateway_mac: str = "",
 
 def get_networks() -> list:
     conn = _get_conn()
-    rows = conn.execute("SELECT cidr, ssid, gateway, first_seen, last_seen FROM networks ORDER BY cidr").fetchall()
+    rows = conn.execute(
+        "SELECT network_id, cidr, gateway_mac, ssid, public_ip, gateway, first_seen, last_seen "
+        "FROM networks ORDER BY cidr"
+    ).fetchall()
     return [dict(r) for r in rows]
 
 
