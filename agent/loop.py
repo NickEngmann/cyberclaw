@@ -391,21 +391,35 @@ class AgentLoop:
                     self.context.clear()
                     output_summary = result.get("output", "")[:500]
 
-                    # Suggest a random host — weighted toward hosts with open ports
-                    # (70% chance interesting host, 30% chance any random host)
+                    # Suggest a random host — weighted toward interesting hosts,
+                    # excluding dead-ends and recently probed hosts
                     import random as _random
                     try:
                         all_hosts = db.get_hosts()
                         excluded = set(self.config["mission"]["scope"].get(
                             "excluded_hosts", []))
+                        # Get dead-end MACs from host memory
+                        all_memories = host_memory.get_all_memories()
+                        dead_end_ips = set()
+                        for mac, mem in all_memories.items():
+                            if mem.get("status") == "dead-end":
+                                dead_end_ips.add(mem.get("ip", ""))
+
+                        # Filter out excluded, dead-end, and just-scanned hosts
+                        recent_ips = set(re.findall(r'192\.168\.1\.\d+',
+                                         " ".join(self.recent_commands[-3:])))
+
                         interesting = [h["ip"] for h in all_hosts
                                        if h["ip"] not in excluded
-                                       and h["ip"] not in command
+                                       and h["ip"] not in dead_end_ips
+                                       and h["ip"] not in recent_ips
                                        and len(h.get("ports", [])) > 0]
                         others = [h["ip"] for h in all_hosts
                                   if h["ip"] not in excluded
-                                  and h["ip"] not in command
+                                  and h["ip"] not in dead_end_ips
+                                  and h["ip"] not in recent_ips
                                   and len(h.get("ports", [])) == 0]
+
                         if interesting and _random.random() < 0.7:
                             suggested = _random.choice(interesting)
                         elif others:
