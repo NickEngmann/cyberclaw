@@ -29,7 +29,7 @@ class AgentLoop:
         self.llm = llm_client
         self.proxy_url = proxy_url
         self.ui = ui
-        self.context = ContextManager(max_tokens=3400)
+        self.context = ContextManager(max_tokens=2800)
         self.planner = PhasePlanner(config)
         self.mission_log = MissionLog(
             config.get("logging", {}).get("dir", "logs")
@@ -57,26 +57,29 @@ class AgentLoop:
             "REASONING: Starting with a ping sweep to discover live hosts.\n"
             "COMMAND: nmap -sn -T2 192.168.1.0/24"
         )
-        # Run a real quick ping sweep to seed live host data
+        # Run a real quick ping sweep — extract just IPs to save tokens
         try:
             import subprocess
             sweep = subprocess.run(
                 ["nmap", "-sn", "-T3", "--max-retries", "1", "192.168.1.0/24"],
                 capture_output=True, text=True, timeout=30,
             )
-            sweep_output = sweep.stdout[:2000]
-        except Exception:
-            sweep_output = (
-                "Nmap scan report for 192.168.1.2\nHost is up.\n"
-                "Nmap scan report for 192.168.1.13\nHost is up.\n"
-                "Nmap scan report for 192.168.1.15\nHost is up.\n"
-                "Nmap scan report for 192.168.1.20\nHost is up.\n"
+            import re as _re
+            live_ips = _re.findall(
+                r'Nmap scan report for (192\.168\.1\.\d+)', sweep.stdout
             )
+            # Remove excluded hosts
+            excluded = set(self.config["mission"]["scope"].get(
+                "excluded_hosts", []))
+            live_ips = [ip for ip in live_ips if ip not in excluded]
+            sweep_summary = f"{len(live_ips)} hosts up: " + ", ".join(live_ips[:15])
+            if len(live_ips) > 15:
+                sweep_summary += f" (+{len(live_ips)-15} more)"
+        except Exception:
+            sweep_summary = "4 hosts up: 192.168.1.2, 192.168.1.13, 192.168.1.15, 192.168.1.20"
         self.context.append_user(
-            f"[STATUS]: success\n[OUTPUT]:\n{sweep_output}\n\n"
-            "Good. Now port-scan each live host one at a time. "
-            "Skip 192.168.1.1 (gateway) and 192.168.1.53 (self). "
-            "Use: nmap -sS -T2 --top-ports 100 <ip>"
+            f"[STATUS]: success\n[OUTPUT]:\n{sweep_summary}\n\n"
+            "Port-scan each live host. Use: nmap -sS -T2 --top-ports 100 <ip>"
         )
 
         # Initial health check
