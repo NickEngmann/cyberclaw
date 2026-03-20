@@ -1,17 +1,17 @@
 PHASE 2: ENUMERATION — Probe services on discovered hosts.
 
-Known hosts:
-- 192.168.1.2: ports 22,53,80,139,443,445,5900 (Raspberry Pi)
-- 192.168.1.15: ports 22,53
-- 192.168.1.20: port 22 (Raspberry Pi)
-- 192.168.1.25: port 8888 (Amazon device)
+Known hosts with open ports:
+- 192.168.1.2 (Raspberry Pi): 22/ssh, 53/dns, 80/http, 139/netbios, 443/https, 445/smb, 5900/vnc
+- 192.168.1.15: 22/ssh, 53/dns
+- 192.168.1.20 (Raspberry Pi): 22/ssh
+- 192.168.1.25 (Amazon): 8888/http
 
-Enumerate ONE service at a time. Good next commands:
+DO NOT run nmap again. Instead probe the services directly:
 - curl -s -I http://192.168.1.2/
-- curl -s -I https://192.168.1.2/ -k
+- curl -sk https://192.168.1.2/
 - curl -s http://192.168.1.25:8888/
-- nmap -sV -T2 -p 22,53,80,443,445,5900 192.168.1.2
 - smbclient -N -L //192.168.1.2/
-- nmap -sV -T2 -p 22 192.168.1.15
+- nmap -sV -T2 -p 22,80,445 192.168.1.2
+- dig @192.168.1.2 version.bind chaos txt
 
 EXIT: 1+ vulnerability or credential found

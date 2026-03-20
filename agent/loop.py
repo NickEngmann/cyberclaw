@@ -50,37 +50,51 @@ class AgentLoop:
         self.ui.render_boot_complete()
         self.watchdog.start()
 
-        # Few-shot seed: show the model the format AND inject real
-        # ping sweep results so it targets live hosts immediately
-        self.context.append_user("Scan the network.")
-        self.context.append_assistant(
-            "REASONING: Ping sweep for live hosts.\n"
-            "COMMAND: nmap -sn -T2 192.168.1.0/24"
-        )
-        # Run a real quick ping sweep — extract just IPs to save tokens
-        try:
-            import subprocess
-            sweep = subprocess.run(
-                ["nmap", "-sn", "-T3", "--max-retries", "1", "192.168.1.0/24"],
-                capture_output=True, text=True, timeout=30,
+        # Phase-aware few-shot seed
+        from agent.planner import Phase
+        if self.planner.current_phase <= Phase.RECON:
+            # RECON: teach nmap scanning
+            self.context.append_user("Scan the network.")
+            self.context.append_assistant(
+                "REASONING: Ping sweep for live hosts.\n"
+                "COMMAND: nmap -sn -T2 192.168.1.0/24"
             )
-            import re as _re
-            live_ips = _re.findall(
-                r'Nmap scan report for (192\.168\.1\.\d+)', sweep.stdout
+            # Run real ping sweep for live host data
+            try:
+                import subprocess
+                sweep = subprocess.run(
+                    ["nmap", "-sn", "-T3", "--max-retries", "1", "192.168.1.0/24"],
+                    capture_output=True, text=True, timeout=30,
+                )
+                import re as _re
+                live_ips = _re.findall(
+                    r'Nmap scan report for (192\.168\.1\.\d+)', sweep.stdout
+                )
+                excluded = set(self.config["mission"]["scope"].get(
+                    "excluded_hosts", []))
+                live_ips = [ip for ip in live_ips if ip not in excluded]
+                sweep_summary = f"{len(live_ips)} hosts up: " + ", ".join(live_ips[:15])
+                if len(live_ips) > 15:
+                    sweep_summary += f" (+{len(live_ips)-15} more)"
+            except Exception:
+                sweep_summary = "4 hosts up: 192.168.1.2, 192.168.1.13, 192.168.1.15, 192.168.1.20"
+            self.context.append_user(
+                f"[STATUS]: success\n[OUTPUT]:\n{sweep_summary}\n\n"
+                "Port-scan each live host. Use: nmap -sS -T2 --top-ports 100 <ip>"
             )
-            # Remove excluded hosts
-            excluded = set(self.config["mission"]["scope"].get(
-                "excluded_hosts", []))
-            live_ips = [ip for ip in live_ips if ip not in excluded]
-            sweep_summary = f"{len(live_ips)} hosts up: " + ", ".join(live_ips[:15])
-            if len(live_ips) > 15:
-                sweep_summary += f" (+{len(live_ips)-15} more)"
-        except Exception:
-            sweep_summary = "4 hosts up: 192.168.1.2, 192.168.1.13, 192.168.1.15, 192.168.1.20"
-        self.context.append_user(
-            f"[STATUS]: success\n[OUTPUT]:\n{sweep_summary}\n\n"
-            "Port-scan each live host. Use: nmap -sS -T2 --top-ports 100 <ip>"
-        )
+        else:
+            # ENUMERATE/EXPLOIT: teach curl/service probing
+            self.context.append_user("Enumerate services on discovered hosts.")
+            self.context.append_assistant(
+                "REASONING: Check HTTP on the Raspberry Pi.\n"
+                "COMMAND: curl -s -I http://192.168.1.2/"
+            )
+            self.context.append_user(
+                "[STATUS]: success\n[OUTPUT]:\n"
+                "HTTP/1.1 200 OK\nServer: lighttpd/1.4.53\n"
+                "Content-Type: text/html\n\n"
+                "Good. Now probe other services. Try: smbclient, curl on other hosts, dig."
+            )
 
         # Initial health check
         health = await self.llm.health_check()
