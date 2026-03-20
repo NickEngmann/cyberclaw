@@ -31,14 +31,14 @@ else
     NOTES="${NOTES}llm-down "
 fi
 
-# ── 2. Executor ──────────────────────────────────────
-if curl -s http://127.0.0.1:5000/health 2>/dev/null | grep -q "ok"; then
-    echo "  [OK] executor :5000" >> "$HEALTH_LOG"
+# ── 2. kali-server-mcp (:5000) ───────────────────────
+if curl -s http://127.0.0.1:5000/health 2>/dev/null | grep -qE "ok|healthy"; then
+    echo "  [OK] kali-server-mcp :5000" >> "$HEALTH_LOG"
     SERVICES_OK=$((SERVICES_OK+1))
 else
-    echo "  [FAIL] executor :5000" >> "$HEALTH_LOG"
+    echo "  [FAIL] kali-server-mcp :5000" >> "$HEALTH_LOG"
     SERVICES_FAIL=$((SERVICES_FAIL+1))
-    NOTES="${NOTES}executor-down "
+    NOTES="${NOTES}mcp-down "
 fi
 
 # ── 3. Scope proxy ───────────────────────────────────
