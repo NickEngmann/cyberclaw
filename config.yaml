@@ -5,7 +5,7 @@ mission:
     excluded_hosts: ["192.168.1.1", "192.168.1.53"]
     excluded_ports: [502, 503]
   authorization: "ROE-2026-003.pdf"
-  max_runtime_hours: 36
+  max_runtime_hours: 0  # 0 = no limit, runs until killed
   auto_wipe_on_complete: false
 
 model:

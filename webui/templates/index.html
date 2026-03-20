@@ -538,10 +538,6 @@
                     <span class="status-label">MODE</span>
                     <span class="status-value" id="s-mode">LOCAL</span>
                 </div>
-                <div class="status-item">
-                    <span class="status-label">WATCHDOG</span>
-                    <span class="status-value" id="s-watchdog">08:00:00</span>
-                </div>
             </div>
             <div>
                 <div class="status-item">
@@ -1062,7 +1058,6 @@
                 });
                 document.getElementById('s-mode').textContent = state.mode;
                 document.getElementById('s-uptime').textContent = state.uptime;
-                document.getElementById('s-watchdog').textContent = state.watchdog;
 
                 const thorEl = document.getElementById('s-thor');
                 thorEl.textContent = state.thor_online ? 'ONLINE' : 'OFFLINE';

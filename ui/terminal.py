@@ -15,7 +15,6 @@ class TerminalUI:
         self.phase = "INIT"
         self.mode = "LOCAL"
         self.uptime = "00:00:00"
-        self.watchdog = "08:00:00"
         self.thor_online = False
         self.wifi_up = False
         self.commands = 0
@@ -123,13 +122,11 @@ class TerminalUI:
     def update_phase(self, phase: str):
         self.phase = phase
 
-    def update_stats(self, uptime: str = None, watchdog: str = None,
+    def update_stats(self, uptime: str = None,
                      commands: int = None, blocked: int = None,
-                     errors: int = None):
+                     errors: int = None, **kwargs):
         if uptime is not None:
             self.uptime = uptime
-        if watchdog is not None:
-            self.watchdog = watchdog
         if commands is not None:
             self.commands = commands
         if blocked is not None:
@@ -148,7 +145,7 @@ class TerminalUI:
         """Print full status bar."""
         print(status_bar(
             phase=self.phase, mode=self.mode,
-            uptime=self.uptime, watchdog=self.watchdog,
+            uptime=self.uptime, watchdog="",
             thor=self.thor_online, wifi=self.wifi_up,
             commands=self.commands, blocked=self.blocked,
             errors=self.errors,

@@ -38,9 +38,7 @@ class AgentLoop:
         self.mission_log = MissionLog(
             config.get("logging", {}).get("dir", "logs")
         )
-        self.watchdog = Watchdog(
-            config["mission"]["max_runtime_hours"]
-        )
+        self.watchdog = Watchdog(0)  # uptime tracker only, no expiry
         self.consecutive_errors = 0
         self.garbage_streak = 0
         self.recent_commands = []  # last N commands for dup detection
@@ -50,7 +48,7 @@ class AgentLoop:
         self.total_garbage = 0
 
     async def run(self):
-        """Main loop — runs until mission complete or watchdog expires."""
+        """Main loop — runs until mission complete or killed."""
         self.ui.render_boot_complete()
         self.watchdog.start()
 
@@ -149,23 +147,10 @@ class AgentLoop:
         self.ui.update_backend_status(health)
 
         while not self.planner.mission_complete:
-            # Watchdog check
-            wdg = self.watchdog.check()
-            if wdg == "expired":
-                self.ui.render_warning("WATCHDOG: Max runtime reached.")
-                self.planner.force_phase("cleanup")
-            elif wdg in ("warn_90", "warn_75"):
-                pct = wdg[-2:]
-                self.ui.render_warning(
-                    f"WATCHDOG: {pct}% runtime. "
-                    f"{self.watchdog.format_remaining()} left."
-                )
-
             phase = self.planner.current_phase
             self.ui.update_phase(self.planner.phase_name)
             self.ui.update_stats(
                 uptime=self.watchdog.format_elapsed(),
-                watchdog=self.watchdog.format_remaining(),
                 commands=self.total_commands,
                 blocked=self.total_blocked,
                 errors=self.consecutive_errors,
@@ -177,7 +162,6 @@ class AgentLoop:
                 "phase": self.planner.phase_name,
                 "mode": "THOR" if self.llm.use_thor else "LOCAL",
                 "uptime": self.watchdog.format_elapsed(),
-                "watchdog": self.watchdog.format_remaining(),
                 "thor_online": self.llm.use_thor,
                 "wifi_up": findings.get("wifi_connected", False),
                 "commands_total": self.total_commands,
