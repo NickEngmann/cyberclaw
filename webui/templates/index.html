@@ -1461,6 +1461,11 @@
         setInterval(pollFindings, 5000);
         pollState();
         pollFindings();
+        // Scroll feed to bottom on initial page load
+        setTimeout(() => {
+            const fb = document.getElementById('feed-body');
+            if (fb) fb.scrollTop = fb.scrollHeight;
+        }, 2500);
     </script>
 </body>
 </html>
