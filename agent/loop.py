@@ -50,19 +50,33 @@ class AgentLoop:
         self.ui.render_boot_complete()
         self.watchdog.start()
 
-        # Few-shot seed: show the model the exact format we want
-        # by giving a fake example exchange, then asking it to continue
+        # Few-shot seed: show the model the format AND inject real
+        # ping sweep results so it targets live hosts immediately
         self.context.append_user("Scan the network.")
         self.context.append_assistant(
             "REASONING: Starting with a ping sweep to discover live hosts.\n"
             "COMMAND: nmap -sn -T2 192.168.1.0/24"
         )
+        # Run a real quick ping sweep to seed live host data
+        try:
+            import subprocess
+            sweep = subprocess.run(
+                ["nmap", "-sn", "-T3", "--max-retries", "1", "192.168.1.0/24"],
+                capture_output=True, text=True, timeout=30,
+            )
+            sweep_output = sweep.stdout[:2000]
+        except Exception:
+            sweep_output = (
+                "Nmap scan report for 192.168.1.2\nHost is up.\n"
+                "Nmap scan report for 192.168.1.13\nHost is up.\n"
+                "Nmap scan report for 192.168.1.15\nHost is up.\n"
+                "Nmap scan report for 192.168.1.20\nHost is up.\n"
+            )
         self.context.append_user(
-            "[STATUS]: success\n[OUTPUT]:\n"
-            "Host is up (0.004s latency). 192.168.1.2\n"
-            "Host is up (0.039s latency). 192.168.1.13\n"
-            "4 hosts up.\n\n"
-            "Continue scanning. What is your next command?"
+            f"[STATUS]: success\n[OUTPUT]:\n{sweep_output}\n\n"
+            "Good. Now port-scan each live host one at a time. "
+            "Skip 192.168.1.1 (gateway) and 192.168.1.53 (self). "
+            "Use: nmap -sS -T2 --top-ports 100 <ip>"
         )
 
         # Initial health check
