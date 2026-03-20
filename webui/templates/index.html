@@ -656,8 +656,9 @@
 
             <!-- Hosts (full width, interactive) -->
             <div class="panel" style="grid-column: 1 / -1;">
-                <div class="panel-header">
-                    DISCOVERED HOSTS <span class="count" id="hosts-count">0</span>
+                <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center;">
+                    <span>DISCOVERED HOSTS <span class="count" id="hosts-count">0</span></span>
+                    <input type="text" id="host-search" placeholder="Filter hosts..." oninput="lastHostFingerprint='';pollFindings()" style="background:var(--bg);border:1px solid var(--border);color:var(--green);padding:3px 8px;font-family:inherit;font-size:11px;width:200px;">
                 </div>
                 <div class="panel-body" id="hosts-body">
                 </div>
@@ -1054,12 +1055,7 @@
                 document.getElementById('s-stats').textContent =
                     `${state.commands_total} / ${state.commands_blocked} / ${state.errors}`;
 
-                // Update findings
-                const f = state.findings || {};
-                document.getElementById('f-hosts').textContent = f.hosts || 0;
-                document.getElementById('f-ports').textContent = f.ports || 0;
-                document.getElementById('f-creds').textContent = f.creds || 0;
-                document.getElementById('f-vulns').textContent = f.vulns || 0;
+                // Findings counters updated by pollFindings only (avoids flashing)
 
                 // Update feed
                 const feedBody = document.getElementById('feed-body');
@@ -1214,16 +1210,34 @@
                 document.getElementById('f-vulns').textContent = data.vulnerabilities || 0;
 
                 let totalPorts = 0;
-                const hosts = data.hosts || [];
+                let hosts = data.hosts || [];
                 for (const h of hosts) totalPorts += (h.ports || []).length;
                 document.getElementById('f-ports').textContent = totalPorts;
+
+                // Sort hosts by IP (numeric)
+                hosts.sort((a, b) => {
+                    const pa = (a.ip||'').split('.').map(Number);
+                    const pb = (b.ip||'').split('.').map(Number);
+                    for (let i = 0; i < 4; i++) { if (pa[i] !== pb[i]) return pa[i] - pb[i]; }
+                    return 0;
+                });
+
+                // Apply search filter
+                const hostSearch = (document.getElementById('host-search') || {}).value || '';
+                if (hostSearch) {
+                    const q = hostSearch.toLowerCase();
+                    hosts = hosts.filter(h =>
+                        (h.ip||'').includes(q) || (h.hostname||'').toLowerCase().includes(q) ||
+                        (h.mac||'').toLowerCase().includes(q) || (h.info||'').toLowerCase().includes(q)
+                    );
+                }
 
                 // Render host cards — only re-render if data changed
                 const hostsBody = document.getElementById('hosts-body');
                 document.getElementById('hosts-count').textContent = hosts.length;
 
-                // Fingerprint: host count + total ports + expanded state
-                const fingerprint = hosts.map(h => h.ip + ':' + (h.ports||[]).length).join(',') + '|' + (expandedHost||'');
+                // Fingerprint: host count + total ports + expanded state + search
+                const fingerprint = hosts.map(h => h.ip + ':' + (h.ports||[]).length).join(',') + '|' + (expandedHost||'') + '|' + hostSearch;
                 const dataChanged = fingerprint !== lastHostFingerprint;
                 lastHostFingerprint = fingerprint;
 
@@ -1267,6 +1281,7 @@
                                     <span class="blacklist-icon ${isBlacklisted ? 'active' : ''}" onclick="toggleBlacklist('${esc(mac)}', '${esc(h.ip)}', event)" title="Blacklist: skip this host">\u26D4</span>
                                     <span class="host-ip" style="${isBlacklisted ? 'text-decoration:line-through; opacity:0.5' : ''}">${esc(h.ip)}</span>
                                     ${h.hostname ? `<span class="host-hostname"> (${esc(h.hostname)})</span>` : ''}
+                                    ${(() => { const m = (h.info||'').match(/\(([^)]+)\)\s*$/); return m ? `<span style="color:var(--cyan);font-size:11px;margin-left:4px">${esc(m[1])}</span>` : ''; })()}
                                     <span style="color:var(--text-dim); margin-left:8px">${(h.ports||[]).length} ports</span>
                                 </div>
                                 <div>

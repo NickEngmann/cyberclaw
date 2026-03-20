@@ -179,6 +179,14 @@ The web UI at `:8888` has full C2 controls:
 - Features: clickable host cards, port details, scan history, network selector, Thor export
 - Reads from SQLite + JSON files (survives agent crashes)
 
+## IMPORTANT: Clean Up Test Artifacts
+After ANY testing that creates data in the DB (test networks, test hosts, demo data):
+- **Delete test networks**: `DELETE FROM networks WHERE network_id NOT IN ('<real_id>')`
+- **Delete test hosts**: `DELETE FROM hosts WHERE network NOT IN (SELECT network_id FROM networks)`
+- **Delete test memories**: Check `host_memories` state for test MAC addresses
+- **Verify**: `python3 -c "from agent.db import *; init_db('logs'); print(get_networks()); print(len(get_hosts()))"`
+- Never leave fake data (HomeWifi, ClientOffice, FF:EE:DD:CC:BB:AA, etc.) in production DB
+
 ## Known Issues
 - Q4_K_M on GPU: extremely slow (falls back to generic kernels)
 - 4B Q8_0: fails to load (exceeds 1GB per-allocation limit)
