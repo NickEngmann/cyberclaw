@@ -17,35 +17,24 @@ SERVICES_FAIL=0
 NOTES=""
 
 # ── 0. Kill duplicate processes (memory leak prevention) ──
-AGENT_COUNT=$(pgrep -f "python3 main.py" 2>/dev/null | wc -l)
-if [ "$AGENT_COUNT" -gt 1 ]; then
-    echo "  [WARN] $AGENT_COUNT agent processes — killing all but newest" >> "$HEALTH_LOG"
-    NEWEST_PID=$(pgrep -f "python3 main.py" | tail -1)
-    pgrep -f "python3 main.py" | while read pid; do
-        [ "$pid" != "$NEWEST_PID" ] && kill -9 "$pid" 2>/dev/null
-    done
-    NOTES="${NOTES}killed-dup-agents "
-fi
-
-MCP_COUNT=$(pgrep -f "kali_server.py" 2>/dev/null | wc -l)
-if [ "$MCP_COUNT" -gt 1 ]; then
-    echo "  [WARN] $MCP_COUNT kali-server processes — killing all but newest" >> "$HEALTH_LOG"
-    NEWEST_PID=$(pgrep -f "kali_server.py\|kali-server-mcp" | tail -1)
-    pgrep -f "kali_server.py\|kali-server-mcp" | while read pid; do
-        [ "$pid" != "$NEWEST_PID" ] && kill -9 "$pid" 2>/dev/null
-    done
-    NOTES="${NOTES}killed-dup-mcp "
-fi
-
-PROXY_COUNT=$(pgrep -f "scope_proxy.py" 2>/dev/null | wc -l)
-if [ "$PROXY_COUNT" -gt 1 ]; then
-    echo "  [WARN] $PROXY_COUNT proxy processes — killing all but newest" >> "$HEALTH_LOG"
-    NEWEST_PID=$(pgrep -f "scope_proxy.py" | tail -1)
-    pgrep -f "scope_proxy.py" | while read pid; do
-        [ "$pid" != "$NEWEST_PID" ] && kill -9 "$pid" 2>/dev/null
-    done
-    NOTES="${NOTES}killed-dup-proxy "
-fi
+# Uses [b]racket trick in grep to avoid matching the grep itself
+dedup_process() {
+    local pattern="$1"
+    local label="$2"
+    local PIDS=$(ps aux | grep "$pattern" | grep -v grep | awk '{print $2}' | sort -n)
+    local COUNT=$(echo "$PIDS" | wc -w)
+    if [ "$COUNT" -gt 1 ]; then
+        local KEEP=$(echo "$PIDS" | tail -1)
+        echo "  [WARN] ${COUNT} ${label} processes — keeping PID $KEEP" >> "$HEALTH_LOG"
+        for pid in $PIDS; do
+            [ "$pid" != "$KEEP" ] && kill -9 "$pid" 2>/dev/null
+        done
+        NOTES="${NOTES}killed-dup-${label} "
+    fi
+}
+dedup_process "python3 main.py" "agent"
+dedup_process "kali_server.py" "mcp"
+dedup_process "scope_proxy.py" "proxy"
 
 # Drop caches periodically
 echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
