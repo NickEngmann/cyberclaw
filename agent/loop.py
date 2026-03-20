@@ -87,17 +87,50 @@ class AgentLoop:
                 "Port-scan each live host. Use: nmap -sS -T2 --top-ports 100 <ip>"
             )
         else:
-            # ENUMERATE/EXPLOIT: teach curl/service probing
+            # ENUMERATE/EXPLOIT: dynamic seed based on known hosts
+            # Pick a tool appropriate to the host's known ports
+            import random as _rand
+            try:
+                hosts_with_ports = [h for h in db.get_hosts()
+                                    if len(h.get("ports", [])) > 0]
+                if hosts_with_ports:
+                    h = _rand.choice(hosts_with_ports)
+                    ports = h.get("ports", [])
+                    ip = h["ip"]
+                    # Pick tool based on ports
+                    if 80 in ports or 443 in ports:
+                        seed_cmd = f"curl -s -I http://{ip}/"
+                        seed_out = "HTTP/1.1 200 OK\nServer: lighttpd/1.4.53"
+                    elif 445 in ports or 139 in ports:
+                        seed_cmd = f"smbclient -N -L //{ip}/"
+                        seed_out = "Sharename  Type  Comment\nshare  Disk"
+                    elif 53 in ports:
+                        seed_cmd = f"dig @{ip} version.bind chaos txt"
+                        seed_out = "status: NOERROR\nversion.bind"
+                    elif 22 in ports:
+                        seed_cmd = f"nmap -sV -T2 -p 22 {ip}"
+                        seed_out = "22/tcp open ssh OpenSSH 9.2p1"
+                    else:
+                        seed_cmd = f"nmap -sV -T2 -p {ports[0]} {ip}"
+                        seed_out = f"{ports[0]}/tcp open unknown"
+                    seed_reason = f"Probe {ip} port {ports[0]}."
+                else:
+                    seed_cmd = "curl -s -I http://192.168.1.2/"
+                    seed_out = "HTTP/1.1 200 OK\nServer: lighttpd/1.4.53"
+                    seed_reason = "Check HTTP on known host."
+            except Exception:
+                seed_cmd = "curl -s -I http://192.168.1.2/"
+                seed_out = "HTTP/1.1 200 OK\nServer: lighttpd/1.4.53"
+                seed_reason = "Check HTTP on known host."
+
             self.context.append_user("Enumerate services on discovered hosts.")
             self.context.append_assistant(
-                "REASONING: Check HTTP on the Raspberry Pi.\n"
-                "COMMAND: curl -s -I http://192.168.1.2/"
+                f"REASONING: {seed_reason}\n"
+                f"COMMAND: {seed_cmd}"
             )
             self.context.append_user(
-                "[STATUS]: success\n[OUTPUT]:\n"
-                "HTTP/1.1 200 OK\nServer: lighttpd/1.4.53\n"
-                "Content-Type: text/html\n\n"
-                "Good. Now probe other services. Try: smbclient, curl on other hosts, dig."
+                f"[STATUS]: success\n[OUTPUT]:\n{seed_out}\n\n"
+                "Good. Now probe a DIFFERENT host with an appropriate tool."
             )
 
         # Initial health check
@@ -428,7 +461,30 @@ class AgentLoop:
                             suggested = _random.choice(interesting)
                         else:
                             suggested = ""
-                        hint = f"Try probing {suggested} next. " if suggested else ""
+                        if suggested:
+                            # Check if we know this host's ports
+                            try:
+                                host_ports = []
+                                for h in all_hosts:
+                                    if h["ip"] == suggested:
+                                        host_ports = h.get("ports", [])
+                                        break
+                                if not host_ports:
+                                    hint = f"Try: nmap -sS -T2 --top-ports 20 {suggested} (unknown ports). "
+                                elif 80 in host_ports or 443 in host_ports:
+                                    hint = f"Try: curl -s -I http://{suggested}/ (has HTTP). "
+                                elif 445 in host_ports:
+                                    hint = f"Try: smbclient -N -L //{suggested}/ (has SMB). "
+                                elif 53 in host_ports:
+                                    hint = f"Try: dig @{suggested} version.bind chaos txt (has DNS). "
+                                elif 22 in host_ports:
+                                    hint = f"Try: nmap -sV -T2 -p 22 {suggested} (has SSH). "
+                                else:
+                                    hint = f"Try: nmap -sV -T2 -p {host_ports[0]} {suggested}. "
+                            except Exception:
+                                hint = f"Try probing {suggested} next. "
+                        else:
+                            hint = ""
                     except Exception:
                         hint = ""
 

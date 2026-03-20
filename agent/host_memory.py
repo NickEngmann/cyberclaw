@@ -205,8 +205,20 @@ def build_prompt_context(max_tokens: int = 300) -> str:
         avoid = mem.get("avoid_tools", [])
         obs = mem.get("observations", [])
 
-        # Build compact line
+        # Build compact line with port info
         parts = [f"{ip}"]
+
+        # Include ports from DB for tool matching
+        try:
+            for h in db.get_hosts():
+                if h.get("mac") == mac or h.get("ip") == ip:
+                    ports = h.get("ports", [])
+                    if ports:
+                        parts.append(f"ports:{','.join(str(p) for p in ports[:6])}")
+                    break
+        except Exception:
+            pass
+
         if status and status != "unknown":
             parts.append(f"[{status}]")
         if tags:
@@ -215,7 +227,7 @@ def build_prompt_context(max_tokens: int = 300) -> str:
             parts.append(f"skip:{','.join(avoid)}")
         # Latest 2 observations
         for o in obs[-2:]:
-            parts.append(o["text"][:80])
+            parts.append(o["text"][:60])
 
         line = " | ".join(parts)
         if len("\n".join(lines)) + len(line) > char_budget:
