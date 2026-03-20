@@ -26,7 +26,7 @@ All reasoning is done by a local Qwen3.5-2B model running on the phone's GPU via
 
 - **Phone:** OnePlus 8 (Snapdragon 865, Adreno 650 GPU, 12GB RAM)
 - **OS:** Android 12 + Kali NetHunter chroot
-- **Model:** Qwen3.5-2B Q8_0 — 4.8 tokens/sec on GPU, 8192 ctx
+- **Model:** Qwen3.5-2B-Unredacted-MAX Q8_0 (abliterated) — 4.8 t/s on GPU, 8192 ctx
 - **Optional:** NVIDIA AGX Thor (128GB) for advanced reasoning over Tailscale
 
 ## Quick Start
@@ -39,7 +39,7 @@ bash INSTALL.sh
 curl -s http://127.0.0.1:8080/health
 
 # Start services
-python3 kali_executor.py --port 5000 &
+kali-server-mcp --port 5000 &
 python3 scope_proxy.py --config config.yaml --port 8800 --upstream http://127.0.0.1:5000 &
 bash scripts/webui-daemon.sh start
 python3 main.py &
@@ -61,8 +61,8 @@ Agent Loop (main.py)
 Scope Enforcement Proxy (:8800)
   │  Validates IPs, blocks destructive cmds, rate limits, audit logs
   ▼
-kali_executor.py (:5000)
-  │  Real shell execution via subprocess
+kali-server-mcp (:5000)
+  │  Official Kali MCP — shlex command execution (no shell=True)
   ▼
 Kali Linux
     nmap, curl, smbclient, nxc, gobuster, dig, hydra, ...
@@ -82,6 +82,7 @@ See `docs/ARCHITECTURE.md` for the full system design.
 - **Self-healing** — garbage detection, context reset, duplicate command detection
 - **Auditable** — every command logged to SQLite + JSONL with reasoning
 - **Memory efficient** — agent RSS ~35-50MB, no memory leak
+- **C2 controls** — star hosts, blacklist, force phase, inject commands, kill switch
 
 ## Tested Results (36h autonomous run)
 

@@ -34,7 +34,7 @@ ssh root@<tailscale-ip>           # Kali root shell (port 22)
 |------|---------|-------------|
 | 22   | SSH     | Kali root shell |
 | 9022 | SSH     | Android shell (Magisk) |
-| 5000 | kali_executor.py | Real command executor (subprocess) |
+| 5000 | kali-server-mcp | Official Kali MCP server (shlex, no shell=True) |
 | 8080 | llama-server | Qwen3.5-2B-Unredacted-MAX Q8_0 (abliterated) via llama.cpp (ctx=8192) |
 | 8800 | scope-proxy | Scope enforcement + rate limit + audit |
 | 8888 | web UI | Dashboard (Tailscale IP only, HTTPS) |
@@ -43,9 +43,9 @@ ssh root@<tailscale-ip>           # Kali root shell (port 22)
 ```
 Agent (main.py) → LLM (llama.cpp :8080) → REASONING + COMMAND
     ↓
-Scope Proxy (:8800) → validates IPs, ports, destructive cmds
+Scope Proxy (:8800) → validates IPs, ports, destructive cmds → /api/command
     ↓
-kali_executor.py (:5000) → subprocess.run() real commands
+kali-server-mcp (:5000) → shlex.split + subprocess (official Kali package)
     ↓
 Kali Linux tools (nmap, curl, smbclient, nxc, gobuster, dig, ...)
 ```
@@ -53,7 +53,7 @@ Kali Linux tools (nmap, curl, smbclient, nxc, gobuster, dig, ...)
 ## Running
 ```bash
 # Start all services manually (after llama-server is healthy)
-python3 kali_executor.py --port 5000 &
+kali-server-mcp --port 5000 &
 python3 scope_proxy.py --config config.yaml --port 8800 --upstream http://127.0.0.1:5000 &
 bash scripts/webui-daemon.sh start
 python3 main.py &
@@ -87,24 +87,49 @@ llama.cpp compiled in Termux with Adreno-optimized OpenCL kernels. Runs as root 
 - **Prompts**: `prompts/*.md` — hot-reloadable, edit to tune model behavior
 - **Export for Thor**: `GET /api/export/<network>` — full JSON dump per network
 
+## kali-server-mcp vs kali_executor.py
+Switched from custom `kali_executor.py` to the official `kali-server-mcp` package:
+- **API**: `POST /api/command` (not `/execute`) — proxy translates the response format
+- **Execution**: Uses `shlex.split` (not `shell=True`) — eliminates `/bin/sh` backtick errors
+- **Response**: Returns `{stdout, stderr, return_code, success, timed_out}`
+- **Proxy translation**: Maps to `{status, output, return_code}` for the agent
+- `kali_executor.py` still exists as a fallback but is not used in production
+
+## C2 Interactive Features (Web UI)
+The web UI at `:8888` has full C2 controls:
+- **⭐ Star hosts**: Prioritize scanning for N iterations (PRIORITY TARGET in prompt)
+- **⛔ Blacklist hosts**: Skip entirely (BLACKLIST in prompt, strikethrough in UI)
+- **✎ Network edit**: Custom names and notes per network
+- **Host notes → LLM**: Analyst notes injected as ANALYST NOTES in system prompt
+- **Pause/Resume**: Toggle agent operation
+- **Force phase**: RECON/ENUMERATE/EXPLOIT buttons
+- **Command injection**: Manual command text input
+- **Tool preferences**: Enable/disable specific tools
+- **Kill switch**: Emergency stop
+- **Config panel**: Live temperature/max_tokens editing
+- **Command search**: Search history by keyword
+
 ## Key Architecture Decisions (from 36h test run)
 - **Few-shot prompting** is essential — the 2B model follows examples, not instructions
 - **Phase-aware seed**: RECON uses nmap example, ENUMERATE uses curl example
 - **Garbage detection** with 5-streak context reset prevents model spiral
 - **Duplicate command detection** forces tool/target diversification
 - **SQLite backend** (not JSON files) for memory efficiency and concurrent access
-- **MAC-keyed hosts** survive DHCP changes, tagged by network CIDR
+- **MAC-keyed hosts** survive DHCP changes, tagged by network_id (gateway MAC hash)
+- **Network discrimination**: Same CIDR on different routers = separate data
+- **kali-server-mcp** eliminates shell interpretation errors vs subprocess shell=True
 - **Agent RSS stays ~35-50MB** — no memory leak when not restarting repeatedly
 - Repeated agent restarts DO leak memory (Python process accumulation) — avoid
 
-## 2B Model Behavior Notes
+## 2B Model Behavior Notes (Qwen3.5-2B-Unredacted-MAX Q8_0)
+- **Abliterated** — no safety refusals, no re-prompting needed
 - ~50% command success rate (inherent limit of 2B parameters)
 - Produces garbage/number sequences ~25% of turns
-- Sometimes responds in Chinese (Qwen training data)
 - Follows few-shot examples more than system prompt instructions
 - Verbose reasoning eats tokens — "10 words max" in system prompt helps
 - Temperature 0.2 gives best format compliance
 - max_tokens 200 balances completeness vs garbage
+- Stealth: system prompt enforces -T2 for nmap (never -T4/-T5)
 
 ## Development Notes
 - Agent auto-detects network: resumes at correct phase based on existing findings
@@ -121,7 +146,7 @@ llama.cpp compiled in Termux with Adreno-optimized OpenCL kernels. Runs as root 
 
 ## After Reboot — Manual Steps
 1. Wait ~23min for llama-server: `curl -s http://127.0.0.1:8080/health`
-2. Start executor: `python3 kali_executor.py --port 5000 &`
+2. Start kali-server-mcp: `kali-server-mcp --port 5000 &`
 3. Start proxy: `python3 scope_proxy.py --config config.yaml --port 8800 --upstream http://127.0.0.1:5000 &`
 4. Start webui: `bash scripts/webui-daemon.sh start`
 5. Start agent: `python3 main.py &`

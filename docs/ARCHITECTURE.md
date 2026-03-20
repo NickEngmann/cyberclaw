@@ -90,10 +90,12 @@ Agent (constructs commands)
    ▼
 Scope Enforcement Proxy (:8800)    ← OUR CODE — the safety layer
    │  Validates targets, rate limits, blocks destructive cmds
-   │  Logs every command to commands.jsonl
+   │  Logs every command to SQLite + commands.jsonl
+   │  Translates response format (stdout/stderr → status/output)
    ▼
-kali-server-mcp (:5000)            ← OFFICIAL KALI PACKAGE
-   │  Raw terminal command execution
+kali-server-mcp (:5000)            ← OFFICIAL KALI PACKAGE (apt install mcp-kali-server)
+   │  POST /api/command — shlex.split execution (no shell=True)
+   │  Returns: {stdout, stderr, return_code, success, timed_out}
    ▼
 Kali Linux (chroot)
    │  nmap, aircrack-ng, hydra, nxc, gobuster, sqlmap, ...

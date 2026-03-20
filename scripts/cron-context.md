@@ -19,9 +19,9 @@ You are monitoring the Nightcrawler autonomous pentest agent. Check in every 10 
 
 ## Services to Monitor
 - llama-server :8080 — LLM (runs on Android side, auto-starts via Magisk watchdog)
-- kali_executor.py :5000 — real command execution (subprocess)
-- scope_proxy.py :8800 — scope enforcement
-- webui :8888 — web dashboard (Tailscale IP, HTTPS)
+- kali-server-mcp :5000 — official Kali command execution (apt package, shlex, no shell=True)
+- scope_proxy.py :8800 — scope enforcement (translates /api/command responses)
+- webui :8888 — web dashboard with C2 controls (Tailscale IP, HTTPS)
 - agent (main.py) — the autonomous agent loop
 
 ## Key Files
