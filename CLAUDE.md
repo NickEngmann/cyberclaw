@@ -157,6 +157,48 @@ Successful interactions are captured for model finetuning:
 - **Export**: `GET /api/training/export/{chatml|jsonl|conversations}`
 - Expected impact: format compliance from ~50% to 85%+ with finetuning
 
+## Claude Code Cron Monitor
+The project uses a Claude Code cron job (every 5 minutes) that autonomously
+monitors the agent, fixes bugs, and logs observations. This is a key part of
+the development workflow — the cron catches issues faster than a human can.
+
+### Cron Prompt Template
+```
+You are the Nightcrawler autonomous pentest agent monitor. Check in every 5 minutes.
+
+1. Run: bash /root/nightcrawler/scripts/health-check.sh
+2. Read last 15 lines of logs/health.log
+3. Check recent commands: tail -10 logs/timeline.jsonl (parse for errors)
+4. Check agent RSS — restart if >200MB
+5. Check pgrep -c llama-server — if >1, LOG CRITICAL (never fix yourself)
+6. Check training stats via /api/training/stats
+7. Check host rotation: are recent commands targeting different hosts?
+8. Check for dumb mistakes: fake paths, nmap -T3+, scanning dead hosts
+9. If agent stuck >15min, restart with clean context
+
+PIPELINE QUALITY CHECKS:
+- Commands with fake paths = validation bug
+- nmap -T3+ = stealth violation
+- Same host repeated = rotation broken
+- Dead-end hosts being scanned = skip logic broken
+- Empty curl not generating notes = learning bug
+
+Fix code if needed, restart service, append to finetuning log.
+```
+
+### What the cron tracks each checkin:
+- Service health (5 services + llama-server count)
+- Agent RSS (memory leak detection, threshold 200MB)
+- Duplicate process detection and cleanup (root cause of memory leaks)
+- Timeline freshness (stale = auto-restart after 30min)
+- Command quality (stealth, rotation, validation)
+- Training data accumulation
+- Host rotation diversity (unique hosts / total commands)
+- Pipeline violations (fake paths, stealth, dead hosts)
+
+### Cron context file: `scripts/cron-context.md`
+### Finetuning log: `nightcrawler-finetuning-logs.md` (gitignored, runtime data)
+
 ## Key Architecture Decisions
 - **Few-shot prompting** is essential — the 2B model follows examples, not instructions
 - **Phase-aware seed**: RECON uses nmap example, ENUMERATE uses curl example
