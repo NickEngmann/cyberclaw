@@ -269,6 +269,30 @@
         .vuln-severity.medium { color: var(--yellow); }
         .vuln-severity.low { color: var(--text-dim); }
 
+        /* Network selector */
+        .network-bar {
+            display: flex;
+            gap: 8px;
+            padding: 6px 10px;
+            border: 1px solid var(--border);
+            background: var(--bg-panel);
+            margin-bottom: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .network-bar label { color: var(--text-dim); font-size: 11px; }
+        .network-btn {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--green);
+            padding: 3px 10px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+        }
+        .network-btn:hover { border-color: var(--green-mid); }
+        .network-btn.active { border-color: var(--green); background: var(--green-dim); }
+
         /* Glitch effect for phase */
         .glitch {
             animation: glitch 0.3s ease;
@@ -331,6 +355,13 @@
                     <span class="status-value" id="s-stats">0 / 0 / 0</span>
                 </div>
             </div>
+        </div>
+
+        <!-- Network Selector -->
+        <div class="network-bar">
+            <label>NETWORK:</label>
+            <button class="network-btn active" id="net-all" onclick="selectNetwork(null)">ALL</button>
+            <span id="network-buttons"></span>
         </div>
 
         <!-- Findings Summary -->
@@ -501,6 +532,42 @@
             return div.innerHTML;
         }
 
+        // Network selection
+        let selectedNetwork = null;
+
+        function selectNetwork(network) {
+            selectedNetwork = network;
+            document.querySelectorAll('.network-btn').forEach(b => b.classList.remove('active'));
+            if (network) {
+                const btn = document.getElementById('net-' + network.replace(/[/.]/g, '-'));
+                if (btn) btn.classList.add('active');
+            } else {
+                document.getElementById('net-all').classList.add('active');
+            }
+            lastHostFingerprint = ''; // force re-render
+            pollFindings();
+        }
+
+        // Load available networks
+        async function loadNetworks() {
+            try {
+                const resp = await fetch('/api/networks');
+                const nets = await resp.json();
+                const container = document.getElementById('network-buttons');
+                container.innerHTML = '';
+                for (const n of nets) {
+                    const btn = document.createElement('button');
+                    btn.className = 'network-btn' + (selectedNetwork === n.cidr ? ' active' : '');
+                    btn.id = 'net-' + n.cidr.replace(/[/.]/g, '-');
+                    btn.textContent = n.cidr + (n.ssid ? ' (' + n.ssid + ')' : '');
+                    btn.onclick = () => selectNetwork(n.cidr);
+                    container.appendChild(btn);
+                }
+            } catch (e) {}
+        }
+        setInterval(loadNetworks, 10000);
+        loadNetworks();
+
         // Parse port/service pairs from info string
         function parseServices(info) {
             const services = {};
@@ -519,8 +586,13 @@
 
         async function pollFindings() {
             try {
-                const resp = await fetch('/api/findings');
-                const data = await resp.json();
+                const url = selectedNetwork
+                    ? '/api/export/' + encodeURIComponent(selectedNetwork)
+                    : '/api/findings';
+                const resp = await fetch(url);
+                // export endpoint wraps in {findings: {...}}, findings returns directly
+                const raw = await resp.json();
+                const data = raw.findings || raw;
 
                 document.getElementById('f-hosts').textContent = data.live_hosts || 0;
                 document.getElementById('f-creds').textContent = data.credentials || 0;
