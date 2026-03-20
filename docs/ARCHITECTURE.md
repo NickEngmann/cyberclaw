@@ -270,12 +270,30 @@ Traditional Scanner:          Nightcrawler:
 ```
 
 Key principles:
-- **Rotate hosts** — never hit the same host twice in a row
+- **Rotate hosts** — weighted random selection (70% interesting, 30% discovery)
 - **One action per turn** — single curl, dig, nmap port check
+- **Match tools to ports** — curl for HTTP, smbclient for SMB, dig for DNS
 - **Build knowledge gradually** — host memory accumulates over many visits
-- **Spread traffic** — no single host sees a burst
+- **Spread traffic** — no single host sees a burst, exclude last 3 probed IPs
+- **Skip dead-ends** — auto-marked hosts excluded from random selection
 - **Exploit only when ready** — after many prior touches build context
 - **Stealth first** — -T2 timing, rate limiting, jitter
+- **Auto-blacklist self** — never scan own IP or gateway
+
+### Port-to-Tool Mapping
+| Port | Tool | Category |
+|------|------|----------|
+| 80, 443, 8080, 8443, 8000, 8888, 3000, 9000 | curl | HTTP/Web |
+| 445, 139 | smbclient | SMB/File Share |
+| 53 | dig | DNS |
+| 22 | nmap -sV / ssh | SSH |
+| 3306, 5432, 1433, 27017 | nmap -sV | Database |
+| 6379 | nmap -sV | Redis |
+| 2375, 2376 | curl /version | Docker API |
+| 5900, 5901 | nmap -sV | VNC |
+| 21 | nmap -sV | FTP |
+| 9200 | curl / | Elasticsearch |
+| Unknown | nmap --top-ports 20 | Discovery |
 
 Host memory (auto-generated observations) prevents the agent from repeating
 dead-end approaches. The red teamer can edit these via the web UI to steer
@@ -341,22 +359,30 @@ Export for Thor: `GET /api/export/<network>` returns full JSON.
 
 ---
 
-## 2B Model Tuning Lessons (from 36h test)
+## 2B Model Tuning Lessons (from extended test runs)
 
-The Qwen3.5-2B model required extensive tuning to produce reliable commands:
+The Qwen3.5-2B-Unredacted-MAX model required extensive tuning:
 
 | Parameter | Final Value | Why |
 |-----------|-------------|-----|
 | Temperature | 0.2 | Higher values increase garbage rate |
 | max_tokens | 200 | Less = truncated commands, more = verbose garbage |
-| Context budget | 6000 tokens | Of 8192 total, leaves room for system prompt |
-| Few-shot seed | Phase-aware | RECON: nmap example, ENUMERATE: curl example |
+| Context budget | 6000 tokens | Of 8192 total, leaves room for prompt + memory |
+| Few-shot seed | Dynamic, port-aware | Picks random host, matches tool to its ports |
 | Garbage reset | 5-streak | Clears context after 5 consecutive failures |
 | Dup detection | 2-in-5 | Forces tool/target diversification |
+| Context reset | Per-turn | Fresh context each command, host memory persists |
+| Host suggestion | Weighted random | 70% interesting hosts, 30% discovery, skip dead-ends |
+| Stealth | -T2 enforced | Command validation rejects -T3+ for nmap |
+| Self-blacklist | Auto on startup | excluded_hosts added to blacklist with self- MAC |
 
-**Key insight:** The 2B model follows few-shot examples, not instructions.
-System prompt text ("DO NOT run nmap") is ignored, but a curl example in
-the conversation seed causes it to produce curl commands.
+**Key insights:**
+- The 2B model follows few-shot examples, not instructions
+- Dynamic seed (matching tool to host's actual ports) greatly improves accuracy
+- Context reset per turn + persistent host memory = best of both worlds
+- Random host suggestion prevents sequential scanning patterns
+- ~50% command success rate is inherent to 2B — finetuning expected to reach 85%+
+- 500+ commands executed, 33+ training examples accumulated for future finetuning
 
 ---
 

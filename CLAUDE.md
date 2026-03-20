@@ -126,6 +126,13 @@ After each command, a random live host is suggested for the next turn:
 - 30% chance: any random host (discovery)
 - Excludes: dead-end hosts, last 3 probed IPs, excluded hosts
 
+## Auto-Blacklist Self
+On startup, the agent auto-blacklists all `excluded_hosts` from config.yaml
+(gateway + self IP) with a `self-` MAC prefix. These show on the web UI as
+blacklisted and are included in Thor exports. This prevents the agent from
+scanning its own kali-mcp-server or the gateway — critical when Thor is in
+the pipeline so it doesn't red-team itself.
+
 ## C2 Interactive Features (Web UI)
 The web UI at `:8888` has full C2 controls:
 - **⭐ Star hosts**: Prioritize scanning for N iterations (PRIORITY TARGET in prompt)
