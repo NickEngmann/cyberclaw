@@ -147,6 +147,14 @@ The agent operates like a stealthy adversary with infinite time:
 - The phase system (RECON/ENUMERATE/EXPLOIT) tracks overall mission progress,
   but the agent acts per-host based on accumulated knowledge
 
+### Random Host Selection (weighted)
+After each command, the agent suggests a random next target:
+- **70% chance**: host with known open ports (productive)
+- **30% chance**: any random host (discovery)
+- **Excludes**: dead-end hosts (from memory), last 3 probed IPs, excluded hosts
+- Prevents sequential scanning patterns (.6,.7,.8,.9) that look like a scanner
+- Dead-end hosts are auto-marked when timeouts/down responses are detected
+
 ## Training Data Capture
 Successful interactions are captured for model finetuning:
 - **Location**: `training_data/` (20GB budget, auto-rotation)
