@@ -11,6 +11,13 @@ import time
 import threading
 from flask import Flask, render_template, jsonify, Response
 
+# Try to use SQLite backend
+try:
+    from agent import db as _db
+    _HAS_DB = True
+except ImportError:
+    _HAS_DB = False
+
 app = Flask(__name__,
             template_folder=os.path.join(os.path.dirname(__file__), "templates"),
             static_folder=os.path.join(os.path.dirname(__file__), "static"))
@@ -205,26 +212,20 @@ def api_stream():
 
 @app.route("/api/findings")
 def api_findings():
-    """Return detailed findings from disk (always fresh)."""
+    """Return detailed findings — SQLite first, JSON fallback."""
+    if _HAS_DB and _db.DB_PATH:
+        try:
+            return jsonify(_db.get_findings_summary())
+        except Exception:
+            pass
+    # Fallback to JSON file
     log_dir = os.environ.get("NC_LOG_DIR",
                              os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs"))
     findings_path = os.path.join(log_dir, "findings.json")
     if os.path.exists(findings_path):
         try:
             with open(findings_path) as f:
-                data = json.load(f)
-            # Also update in-memory state from disk
-            with _state_lock:
-                _state["hosts"] = data.get("hosts", [])
-                _state["creds"] = data.get("creds", [])
-                _state["vulns"] = data.get("vulns", [])
-                _state["findings"] = {
-                    "hosts": data.get("live_hosts", 0),
-                    "ports": data.get("open_ports", 0),
-                    "creds": data.get("credentials", 0),
-                    "vulns": data.get("vulnerabilities", 0),
-                }
-            return jsonify(data)
+                return jsonify(json.load(f))
         except (json.JSONDecodeError, IOError):
             pass
     return jsonify({})
@@ -232,7 +233,13 @@ def api_findings():
 
 @app.route("/api/commands")
 def api_commands():
-    """Return recent commands from audit log."""
+    """Return recent commands — SQLite first, JSONL fallback."""
+    if _HAS_DB and _db.DB_PATH:
+        try:
+            return jsonify(_db.get_commands(100))
+        except Exception:
+            pass
+    # Fallback
     log_dir = os.environ.get("NC_LOG_DIR",
                              os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs"))
     commands_path = os.path.join(log_dir, "commands.jsonl")
@@ -244,7 +251,6 @@ def api_commands():
                     commands.append(json.loads(line.strip()))
                 except json.JSONDecodeError:
                     pass
-    # Return last 100
     return jsonify(commands[-100:])
 
 

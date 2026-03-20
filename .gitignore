@@ -16,6 +16,9 @@ logs/findings.json
 logs/timeline.jsonl
 logs/commands.jsonl
 logs/creds.enc
+logs/nightcrawler.db
+logs/nightcrawler.db-wal
+logs/nightcrawler.db-shm
 
 # Runtime PIDs
 *.pid
