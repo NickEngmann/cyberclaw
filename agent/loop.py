@@ -98,18 +98,29 @@ class AgentLoop:
                     ports = h.get("ports", [])
                     ip = h["ip"]
                     # Pick tool based on ports
-                    if 80 in ports or 443 in ports:
-                        seed_cmd = f"curl -s -I http://{ip}/"
-                        seed_out = "HTTP/1.1 200 OK\nServer: lighttpd/1.4.53"
-                    elif 445 in ports or 139 in ports:
+                    ps = set(ports)
+                    http_ports = ps & {80, 443, 8080, 8443, 8000, 8888, 3000, 9000, 9200}
+                    if http_ports:
+                        p = min(http_ports)
+                        port_part = "" if p in (80, 443) else f":{p}"
+                        seed_cmd = f"curl -s -I http://{ip}{port_part}/"
+                        seed_out = "HTTP/1.1 200 OK\nServer: nginx/1.18"
+                    elif ps & {445, 139}:
                         seed_cmd = f"smbclient -N -L //{ip}/"
                         seed_out = "Sharename  Type  Comment\nshare  Disk"
-                    elif 53 in ports:
+                    elif 53 in ps:
                         seed_cmd = f"dig @{ip} version.bind chaos txt"
                         seed_out = "status: NOERROR\nversion.bind"
-                    elif 22 in ports:
+                    elif 22 in ps:
                         seed_cmd = f"nmap -sV -T2 -p 22 {ip}"
                         seed_out = "22/tcp open ssh OpenSSH 9.2p1"
+                    elif ps & {3306, 5432, 1433, 27017, 6379}:
+                        p = min(ps & {3306, 5432, 1433, 27017, 6379})
+                        seed_cmd = f"nmap -sV -T2 -p {p} {ip}"
+                        seed_out = f"{p}/tcp open database"
+                    elif ps & {2375, 2376}:
+                        seed_cmd = f"curl -s http://{ip}:2375/version"
+                        seed_out = '{"Version":"20.10.17"}'
                     else:
                         seed_cmd = f"nmap -sV -T2 -p {ports[0]} {ip}"
                         seed_out = f"{ports[0]}/tcp open unknown"
@@ -471,16 +482,32 @@ class AgentLoop:
                                         break
                                 if not host_ports:
                                     hint = f"Try: nmap -sS -T2 --top-ports 20 {suggested} (unknown ports). "
-                                elif 80 in host_ports or 443 in host_ports:
-                                    hint = f"Try: curl -s -I http://{suggested}/ (has HTTP). "
-                                elif 445 in host_ports:
-                                    hint = f"Try: smbclient -N -L //{suggested}/ (has SMB). "
-                                elif 53 in host_ports:
-                                    hint = f"Try: dig @{suggested} version.bind chaos txt (has DNS). "
-                                elif 22 in host_ports:
-                                    hint = f"Try: nmap -sV -T2 -p 22 {suggested} (has SSH). "
                                 else:
-                                    hint = f"Try: nmap -sV -T2 -p {host_ports[0]} {suggested}. "
+                                    # Match tool to first interesting port
+                                    hp = set(host_ports)
+                                    http_ports = hp & {80, 443, 8080, 8443, 8000, 8888, 3000, 9000, 9200}
+                                    if http_ports:
+                                        p = min(http_ports)
+                                        scheme = "https" if p in (443, 8443, 9443) else "http"
+                                        port_part = "" if p in (80, 443) else f":{p}"
+                                        hint = f"Try: curl -s -I {scheme}://{suggested}{port_part}/ (port {p}). "
+                                    elif hp & {445, 139}:
+                                        hint = f"Try: smbclient -N -L //{suggested}/ (has SMB). "
+                                    elif 53 in hp:
+                                        hint = f"Try: dig @{suggested} version.bind chaos txt (has DNS). "
+                                    elif 22 in hp:
+                                        hint = f"Try: nmap -sV -T2 -p 22 {suggested} (has SSH). "
+                                    elif hp & {3306, 5432, 1433, 27017, 6379}:
+                                        p = min(hp & {3306, 5432, 1433, 27017, 6379})
+                                        hint = f"Try: nmap -sV -T2 -p {p} {suggested} (database). "
+                                    elif hp & {5900, 5901}:
+                                        hint = f"Try: nmap -sV -T2 -p 5900 {suggested} (VNC). "
+                                    elif hp & {2375, 2376}:
+                                        hint = f"Try: curl -s http://{suggested}:2375/version (Docker API). "
+                                    elif 21 in hp:
+                                        hint = f"Try: nmap -sV -T2 -p 21 {suggested} (FTP). "
+                                    else:
+                                        hint = f"Try: nmap -sV -T2 -p {host_ports[0]} {suggested}. "
                             except Exception:
                                 hint = f"Try probing {suggested} next. "
                         else:

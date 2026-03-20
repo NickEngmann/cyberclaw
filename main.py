@@ -153,6 +153,20 @@ async def main():
         ui=ui,
     )
 
+    # Auto-blacklist self to prevent scanning our own services
+    # This is critical for Thor — prevents red-teaming its own kali-mcp-server
+    try:
+        from agent import db as _db
+        self_ips = config["mission"]["scope"].get("excluded_hosts", [])
+        blacklist = _db.get_state("blacklisted_hosts", [])
+        existing_ips = {b.get("ip") for b in blacklist}
+        for self_ip in self_ips:
+            if self_ip not in existing_ips:
+                blacklist.append({"mac": f"self-{self_ip}", "ip": self_ip})
+        _db.set_state("blacklisted_hosts", blacklist)
+    except Exception:
+        pass
+
     # If already connected, skip WiFi breach — check existing data for phase
     if check_network_connectivity():
         loop.mission_log.set_finding("wifi_connected", True)
