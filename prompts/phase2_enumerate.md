@@ -1,30 +1,17 @@
-PHASE 2: ENUMERATION — Deep-dive discovered services.
+PHASE 2: ENUMERATION — Probe services on discovered hosts.
 
-For each discovered host and service, enumerate thoroughly:
+Known hosts:
+- 192.168.1.2: ports 22,53,80,139,443,445,5900 (Raspberry Pi)
+- 192.168.1.15: ports 22,53
+- 192.168.1.20: port 22 (Raspberry Pi)
+- 192.168.1.25: port 8888 (Amazon device)
 
-SMB (445):
-- nxc smb <target> --shares -u '' -p ''
-- nxc smb <target> --users -u '' -p ''
-- enum4linux -a <target>
-- smbclient -N -L //<target>/
+Enumerate ONE service at a time. Good next commands:
+- curl -s -I http://192.168.1.2/
+- curl -s -I https://192.168.1.2/ -k
+- curl -s http://192.168.1.25:8888/
+- nmap -sV -T2 -p 22,53,80,443,445,5900 192.168.1.2
+- smbclient -N -L //192.168.1.2/
+- nmap -sV -T2 -p 22 192.168.1.15
 
-HTTP (80/443/8080):
-- curl -s -I http://<target>/ (grab headers, server version)
-- gobuster dir -u http://<target>/ -w /usr/share/wordlists/dirb/common.txt -q
-- nikto -h http://<target>/ -Tuning 1
-
-SSH (22):
-- Check for banner: curl -s telnet://<target>:22 or nmap -sV -p 22 <target>
-
-DNS (53):
-- dig @<target> any <domain>
-- dig @<target> axfr <domain>
-
-MySQL (3306) / PostgreSQL (5432):
-- nxc mysql <target> -u root -p ''
-- nxc postgres <target> -u postgres -p ''
-
-Try null sessions, anonymous access, and default credentials.
-Respect lockout thresholds — if you see lockouts, STOP spraying.
-
-EXIT: 1+ vulnerability or credential found, OR all services enumerated
+EXIT: 1+ vulnerability or credential found
