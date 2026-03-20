@@ -17,7 +17,7 @@ SERVICES_FAIL=0
 NOTES=""
 
 # ── 0. Kill duplicate processes (memory leak prevention) ──
-AGENT_COUNT=$(pgrep -fc "python3 main.py" 2>/dev/null || echo 0)
+AGENT_COUNT=$(pgrep -f "python3 main.py" 2>/dev/null | wc -l)
 if [ "$AGENT_COUNT" -gt 1 ]; then
     echo "  [WARN] $AGENT_COUNT agent processes — killing all but newest" >> "$HEALTH_LOG"
     NEWEST_PID=$(pgrep -f "python3 main.py" | tail -1)
@@ -27,7 +27,7 @@ if [ "$AGENT_COUNT" -gt 1 ]; then
     NOTES="${NOTES}killed-dup-agents "
 fi
 
-MCP_COUNT=$(pgrep -fc "kali_server.py\|kali-server-mcp" 2>/dev/null || echo 0)
+MCP_COUNT=$(pgrep -f "kali_server.py" 2>/dev/null | wc -l)
 if [ "$MCP_COUNT" -gt 1 ]; then
     echo "  [WARN] $MCP_COUNT kali-server processes — killing all but newest" >> "$HEALTH_LOG"
     NEWEST_PID=$(pgrep -f "kali_server.py\|kali-server-mcp" | tail -1)
@@ -37,7 +37,7 @@ if [ "$MCP_COUNT" -gt 1 ]; then
     NOTES="${NOTES}killed-dup-mcp "
 fi
 
-PROXY_COUNT=$(pgrep -fc "scope_proxy.py" 2>/dev/null || echo 0)
+PROXY_COUNT=$(pgrep -f "scope_proxy.py" 2>/dev/null | wc -l)
 if [ "$PROXY_COUNT" -gt 1 ]; then
     echo "  [WARN] $PROXY_COUNT proxy processes — killing all but newest" >> "$HEALTH_LOG"
     NEWEST_PID=$(pgrep -f "scope_proxy.py" | tail -1)
