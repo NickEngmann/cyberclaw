@@ -476,41 +476,8 @@
                     feedBody.scrollTop = feedBody.scrollHeight;
                 }
 
-                // Update hosts
-                const hosts = state.hosts || [];
-                const hostsBody = document.getElementById('hosts-body');
-                document.getElementById('hosts-count').textContent = hosts.length;
-                hostsBody.innerHTML = '';
-                for (const h of hosts) {
-                    const div = document.createElement('div');
-                    div.className = 'host-entry';
-                    div.innerHTML = `<span class="host-ip">${esc(h.ip)}</span>` +
-                        (h.ports ? `<br><span class="host-ports">Ports: ${esc(h.ports.join(', '))}</span>` : '') +
-                        (h.info ? `<br><span class="host-info">${esc(h.info)}</span>` : '');
-                    hostsBody.appendChild(div);
-                }
-
-                // Update creds & vulns
-                const creds = state.creds || [];
-                const vulns = state.vulns || [];
-                const cvBody = document.getElementById('cv-body');
-                document.getElementById('cv-count').textContent = creds.length + vulns.length;
-                cvBody.innerHTML = '';
-                for (const c of creds) {
-                    const div = document.createElement('div');
-                    div.className = 'cred-entry';
-                    div.innerHTML = `<span class="cred-service">[${esc(c.service)}]</span> ` +
-                        `<span class="cred-user">${esc(c.username)}</span>:****` +
-                        (c.host ? ` @ ${esc(c.host)}` : '');
-                    cvBody.appendChild(div);
-                }
-                for (const v of vulns) {
-                    const div = document.createElement('div');
-                    div.className = 'vuln-entry';
-                    div.innerHTML = `<span class="vuln-severity ${esc(v.severity)}">[${esc(v.severity.toUpperCase())}]</span> ` +
-                        `${esc(v.host)} — ${esc(v.vuln)}`;
-                    cvBody.appendChild(div);
-                }
+                // Hosts and creds/vulns are rendered by pollFindings only
+                // (pollState just updates the counters in the status bar)
 
             } catch (e) {
                 console.error('Poll error:', e);
@@ -548,6 +515,7 @@
 
         // Render interactive host cards
         let expandedHost = null;
+        let lastHostFingerprint = '';
 
         async function pollFindings() {
             try {
@@ -563,11 +531,16 @@
                 for (const h of hosts) totalPorts += (h.ports || []).length;
                 document.getElementById('f-ports').textContent = totalPorts;
 
-                // Render host cards
+                // Render host cards — only re-render if data changed
                 const hostsBody = document.getElementById('hosts-body');
                 document.getElementById('hosts-count').textContent = hosts.length;
 
-                if (hosts.length > 0) {
+                // Fingerprint: host count + total ports + expanded state
+                const fingerprint = hosts.map(h => h.ip + ':' + (h.ports||[]).length).join(',') + '|' + (expandedHost||'');
+                const dataChanged = fingerprint !== lastHostFingerprint;
+                lastHostFingerprint = fingerprint;
+
+                if (hosts.length > 0 && dataChanged) {
                     hostsBody.innerHTML = '';
                     for (const h of hosts) {
                         const services = parseServices(h.info);
