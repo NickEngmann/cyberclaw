@@ -86,6 +86,18 @@ else
     cd "$NC_HOME" && bash scripts/webui-daemon.sh restart >> "$HEALTH_LOG" 2>&1
 fi
 
+# ── 4b. llama-server memory tracking ─────────────────
+LLAMA_PID=$(pgrep llama-server 2>/dev/null | head -1)
+if [ -n "$LLAMA_PID" ]; then
+    LLAMA_RSS=$(ps -o rss= -p "$LLAMA_PID" 2>/dev/null | tr -d ' ')
+    LLAMA_RSS_MB=$((LLAMA_RSS / 1024))
+    echo "  [INFO] llama-server RSS: ${LLAMA_RSS_MB}MB" >> "$HEALTH_LOG"
+    if [ "$LLAMA_RSS_MB" -gt 5000 ]; then
+        echo "  [WARN] llama-server growing: ${LLAMA_RSS_MB}MB (>5GB)" >> "$HEALTH_LOG"
+        NOTES="${NOTES}llama-${LLAMA_RSS_MB}M "
+    fi
+fi
+
 # ── 5. Agent process ─────────────────────────────────
 if pgrep -f "python3 main.py" > /dev/null 2>&1; then
     echo "  [OK] agent process" >> "$HEALTH_LOG"

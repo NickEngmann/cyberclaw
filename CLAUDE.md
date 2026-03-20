@@ -121,6 +121,11 @@ Context is cleared after each successful command. The system prompt is rebuilt
 fresh each turn with: phase prompt + host memory + network memory + C2 controls.
 This prevents context pollution while maintaining persistent knowledge.
 
+After each command, a random live host is suggested for the next turn:
+- 70% chance: host with known open ports (productive)
+- 30% chance: any random host (discovery)
+- Excludes: dead-end hosts, last 3 probed IPs, excluded hosts
+
 ## C2 Interactive Features (Web UI)
 The web UI at `:8888` has full C2 controls:
 - **⭐ Star hosts**: Prioritize scanning for N iterations (PRIORITY TARGET in prompt)
@@ -197,12 +202,21 @@ Fix code if needed, restart service, append to finetuning log.
 ### What the cron tracks each checkin:
 - Service health (5 services + llama-server count)
 - Agent RSS (memory leak detection, threshold 200MB)
+- llama-server RSS (KV cache growth, warn at >5GB)
 - Duplicate process detection and cleanup (root cause of memory leaks)
 - Timeline freshness (stale = auto-restart after 30min)
 - Command quality (stealth, rotation, validation)
 - Training data accumulation
 - Host rotation diversity (unique hosts / total commands)
 - Pipeline violations (fake paths, stealth, dead hosts)
+
+### Known memory behavior:
+- llama-server KV cache grows ~1.3GB over 2-3h of operation (4.6→5.9GB observed)
+- This is a known llama.cpp behavior — not easily fixable without server restart
+- Android apps respawn and consume ~1.5GB (Google services, keyboard, etc.)
+- Agent RSS stays stable at ~48MB — no Python-side leak
+- Periodic phone restart (every 6-8h) is the practical mitigation
+- The health check now tracks llama-server RSS and warns at >5GB
 
 ### Cron context file: `scripts/cron-context.md`
 ### Finetuning log: `nightcrawler-finetuning-logs.md` (gitignored, runtime data)
