@@ -293,6 +293,203 @@
         .network-btn:hover { border-color: var(--green-mid); }
         .network-btn.active { border-color: var(--green); background: var(--green-dim); }
 
+        /* Control bar */
+        .control-bar {
+            display: flex;
+            gap: 8px;
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            background: var(--bg-panel);
+            margin-bottom: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .control-bar button {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--green);
+            padding: 4px 12px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+            transition: border-color 0.2s, color 0.2s;
+        }
+        .control-bar button:hover { border-color: var(--green-mid); }
+        .control-bar button.active-phase { border-color: var(--green); background: var(--green-dim); }
+        .control-label { color: var(--text-dim); font-size: 11px; margin-left: 8px; }
+        #kill-btn { border-color: var(--red); color: var(--red); }
+        #kill-btn:hover { background: rgba(255,0,64,0.1); }
+        #kill-btn.killed { background: var(--red); color: var(--bg); }
+        #pause-btn.paused { border-color: var(--red); color: var(--red); }
+
+        /* Command injection */
+        .command-input {
+            display: flex;
+            gap: 0;
+            border: 1px solid var(--border);
+            background: var(--bg-panel);
+            margin-top: 2px;
+            align-items: center;
+        }
+        .command-input .prompt {
+            color: var(--green);
+            padding: 6px 4px 6px 12px;
+            font-family: inherit;
+            font-size: 13px;
+            user-select: none;
+        }
+        .command-input input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--green);
+            font-family: inherit;
+            font-size: 13px;
+            padding: 6px 8px;
+            outline: none;
+        }
+        .command-input input::placeholder { color: var(--text-dim); }
+        .command-input button {
+            background: var(--bg);
+            border: none;
+            border-left: 1px solid var(--border);
+            color: var(--green);
+            padding: 6px 16px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .command-input button:hover { background: var(--green-dim); }
+
+        /* Command history search */
+        .search-input {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--green);
+            font-family: inherit;
+            font-size: 11px;
+            padding: 2px 8px;
+            outline: none;
+            width: 160px;
+            margin-left: auto;
+        }
+        .search-input::placeholder { color: var(--text-dim); }
+        .cmd-history-entry {
+            padding: 3px 0;
+            border-bottom: 1px solid #111;
+            font-size: 11px;
+        }
+        .cmd-history-entry .ts { color: var(--text-dim); }
+        .cmd-history-entry .cmd { color: var(--green); }
+        .cmd-history-entry .status-ok { color: var(--green); }
+        .cmd-history-entry .status-err { color: var(--red); }
+
+        /* Star icon */
+        .star-icon {
+            cursor: pointer;
+            font-size: 14px;
+            margin-right: 6px;
+            opacity: 0.3;
+            transition: opacity 0.2s;
+            user-select: none;
+        }
+        .star-icon:hover { opacity: 0.7; }
+        .star-icon.starred { opacity: 1; color: var(--yellow); }
+
+        /* Host notes */
+        .host-notes {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #111;
+        }
+        .host-notes-title { color: var(--text-dim); font-size: 10px; margin-bottom: 4px; }
+        .host-notes textarea {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: inherit;
+            font-size: 11px;
+            padding: 4px 8px;
+            resize: vertical;
+            min-height: 40px;
+            outline: none;
+        }
+        .host-notes textarea:focus { border-color: var(--green-mid); }
+
+        /* Config panel */
+        .config-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.8);
+            z-index: 999;
+            justify-content: center;
+            align-items: center;
+        }
+        .config-overlay.visible { display: flex; }
+        .config-panel {
+            background: var(--bg-panel);
+            border: 1px solid var(--green);
+            padding: 20px;
+            min-width: 320px;
+            max-width: 90vw;
+        }
+        .config-panel h3 {
+            color: var(--green);
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+        .config-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .config-row label { color: var(--text-dim); font-size: 12px; }
+        .config-row input {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--green);
+            font-family: inherit;
+            font-size: 12px;
+            padding: 3px 8px;
+            width: 100px;
+            outline: none;
+            text-align: right;
+        }
+        .config-panel button {
+            background: var(--bg);
+            border: 1px solid var(--green);
+            color: var(--green);
+            padding: 6px 20px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+            margin-top: 12px;
+        }
+        .config-panel button:hover { background: var(--green-dim); }
+        .config-panel .close-btn {
+            border-color: var(--text-dim);
+            color: var(--text-dim);
+            margin-left: 8px;
+        }
+
+        /* Queue badge */
+        .queue-badge {
+            background: var(--yellow);
+            color: var(--bg);
+            padding: 0 6px;
+            border-radius: 2px;
+            font-size: 10px;
+            font-weight: bold;
+            margin-left: 4px;
+            display: none;
+        }
+        .queue-badge.visible { display: inline; }
+
         /* Glitch effect for phase */
         .glitch {
             animation: glitch 0.3s ease;
@@ -364,6 +561,18 @@
             <span id="network-buttons"></span>
         </div>
 
+        <!-- Control Bar -->
+        <div class="control-bar">
+            <button id="pause-btn" onclick="togglePause()">&#9208; PAUSE</button>
+            <span class="control-label">PHASE:</span>
+            <button id="phase-recon" onclick="forcePhase('recon')">RECON</button>
+            <button id="phase-enumerate" onclick="forcePhase('enumerate')">ENUM</button>
+            <button id="phase-exploit" onclick="forcePhase('exploit')">EXPLOIT</button>
+            <button onclick="toggleConfig()">&#9881; CONFIG</button>
+            <span class="queue-badge" id="queue-badge">Q:0</span>
+            <button id="kill-btn" onclick="killSwitch()">&#9940; KILL</button>
+        </div>
+
         <!-- Findings Summary -->
         <div class="findings-bar">
             <div class="finding-stat">
@@ -400,6 +609,11 @@
                         <span class="feed-content">Waiting for agent...</span>
                     </div>
                 </div>
+                <div class="command-input">
+                    <span class="prompt">$</span>
+                    <input type="text" id="cmd-input" placeholder="Inject command..." onkeydown="if(event.key==='Enter')injectCommand()">
+                    <button onclick="injectCommand()">INJECT</button>
+                </div>
             </div>
 
             <!-- Hosts (full width, interactive) -->
@@ -419,7 +633,47 @@
                 <div class="panel-body" id="cv-body">
                 </div>
             </div>
+
+            <!-- Command History -->
+            <div class="panel" style="grid-column: 1 / -1;">
+                <div class="panel-header">
+                    COMMAND HISTORY <input type="text" class="search-input" id="cmd-search" placeholder="Search commands..." oninput="debounceSearch()">
+                </div>
+                <div class="panel-body" id="cmd-history-body">
+                    <div style="color:var(--text-dim)">Type to search command history...</div>
+                </div>
+            </div>
         </div>
+
+        <!-- Config Overlay -->
+        <div class="config-overlay" id="config-overlay" onclick="if(event.target===this)toggleConfig()">
+            <div class="config-panel">
+                <h3>&#9881; AGENT CONFIG</h3>
+                <div class="config-row">
+                    <label>TEMPERATURE</label>
+                    <input type="number" id="cfg-temperature" step="0.1" min="0" max="2" value="0.7">
+                </div>
+                <div class="config-row">
+                    <label>MAX TOKENS</label>
+                    <input type="number" id="cfg-max-tokens" step="50" min="50" max="4096" value="512">
+                </div>
+                <div class="config-row">
+                    <label>DISABLED TOOLS</label>
+                    <input type="text" id="cfg-disabled" placeholder="nikto,sqlmap" style="width:150px">
+                </div>
+                <div class="config-row">
+                    <label>PREFERRED TOOLS</label>
+                    <input type="text" id="cfg-preferred" placeholder="nmap,gobuster" style="width:150px">
+                </div>
+                <div style="text-align:right">
+                    <button onclick="saveConfig()">SAVE</button>
+                    <button class="close-btn" onclick="toggleConfig()">CLOSE</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Network Info (hidden, used by JS) -->
+        <div id="net-info-data" style="display:none"></div>
     </div>
 
     <script>
@@ -457,6 +711,233 @@
                 canvas.height = window.innerHeight;
             });
         })();
+
+        // C2 state
+        let agentPaused = false;
+        let agentKilled = false;
+        let starredMacs = new Set();
+        let hostNotes = {};
+        let searchTimeout = null;
+
+        // Load initial C2 state
+        async function loadC2State() {
+            try {
+                const [statusResp, starredResp, configResp, toolsResp, queueResp] = await Promise.all([
+                    fetch('/api/agent/status'),
+                    fetch('/api/hosts/starred'),
+                    fetch('/api/config'),
+                    fetch('/api/tools/preferences'),
+                    fetch('/api/commands/queue'),
+                ]);
+                const status = await statusResp.json();
+                agentPaused = status.paused;
+                agentKilled = status.kill_switch;
+                updatePauseBtn();
+                updateKillBtn();
+
+                const starred = await starredResp.json();
+                starredMacs = new Set((starred || []).map(s => s.mac));
+
+                const config = await configResp.json();
+                document.getElementById('cfg-temperature').value = config.temperature || 0.7;
+                document.getElementById('cfg-max-tokens').value = config.max_tokens || 512;
+
+                const tools = await toolsResp.json();
+                document.getElementById('cfg-disabled').value = (tools.disabled || []).join(',');
+                document.getElementById('cfg-preferred').value = (tools.preferred || []).join(',');
+
+                const queue = await queueResp.json();
+                updateQueueBadge(queue.length);
+            } catch(e) {}
+        }
+        loadC2State();
+        setInterval(loadC2State, 5000);
+
+        function updatePauseBtn() {
+            const btn = document.getElementById('pause-btn');
+            if (agentPaused) {
+                btn.textContent = '\u25B6 RESUME';
+                btn.classList.add('paused');
+            } else {
+                btn.textContent = '\u23F8 PAUSE';
+                btn.classList.remove('paused');
+            }
+        }
+
+        function updateKillBtn() {
+            const btn = document.getElementById('kill-btn');
+            if (agentKilled) {
+                btn.classList.add('killed');
+                btn.textContent = '\u26D4 KILLED';
+            }
+        }
+
+        function updateQueueBadge(count) {
+            const badge = document.getElementById('queue-badge');
+            if (count > 0) {
+                badge.textContent = 'Q:' + count;
+                badge.classList.add('visible');
+            } else {
+                badge.classList.remove('visible');
+            }
+        }
+
+        async function togglePause() {
+            const endpoint = agentPaused ? '/api/agent/resume' : '/api/agent/pause';
+            try {
+                await fetch(endpoint, { method: 'POST' });
+                agentPaused = !agentPaused;
+                updatePauseBtn();
+            } catch(e) {}
+        }
+
+        async function forcePhase(phase) {
+            try {
+                await fetch('/api/phase', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({phase: phase})
+                });
+                document.querySelectorAll('.control-bar button[id^="phase-"]').forEach(b => b.classList.remove('active-phase'));
+                const btn = document.getElementById('phase-' + phase);
+                if (btn) btn.classList.add('active-phase');
+            } catch(e) {}
+        }
+
+        async function killSwitch() {
+            if (!window.confirm('KILL SWITCH: This will immediately halt all agent operations. Are you sure?')) return;
+            try {
+                await fetch('/api/killswitch', { method: 'POST' });
+                agentKilled = true;
+                agentPaused = true;
+                updateKillBtn();
+                updatePauseBtn();
+            } catch(e) {}
+        }
+
+        function toggleConfig() {
+            const overlay = document.getElementById('config-overlay');
+            overlay.classList.toggle('visible');
+        }
+
+        async function saveConfig() {
+            const temp = parseFloat(document.getElementById('cfg-temperature').value);
+            const maxT = parseInt(document.getElementById('cfg-max-tokens').value);
+            const disabled = document.getElementById('cfg-disabled').value.split(',').map(s => s.trim()).filter(Boolean);
+            const preferred = document.getElementById('cfg-preferred').value.split(',').map(s => s.trim()).filter(Boolean);
+
+            try {
+                await Promise.all([
+                    fetch('/api/config', {
+                        method: 'PATCH',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({temperature: temp, max_tokens: maxT})
+                    }),
+                    fetch('/api/tools/preferences', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({disabled: disabled, preferred: preferred})
+                    })
+                ]);
+                toggleConfig();
+            } catch(e) {}
+        }
+
+        async function injectCommand() {
+            const input = document.getElementById('cmd-input');
+            const cmd = input.value.trim();
+            if (!cmd) return;
+            try {
+                const resp = await fetch('/api/commands/queue', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({command: cmd})
+                });
+                const data = await resp.json();
+                updateQueueBadge((data.queue || []).length);
+                input.value = '';
+            } catch(e) {}
+        }
+
+        async function toggleStar(mac, evt) {
+            evt.stopPropagation();
+            if (starredMacs.has(mac)) {
+                await fetch('/api/hosts/star', {
+                    method: 'DELETE',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({mac: mac})
+                });
+                starredMacs.delete(mac);
+            } else {
+                await fetch('/api/hosts/star', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({mac: mac, iterations: 5})
+                });
+                starredMacs.add(mac);
+            }
+            lastHostFingerprint = '';
+            pollFindings();
+        }
+
+        async function saveHostNote(mac) {
+            const ta = document.getElementById('notes-' + mac.replace(/:/g, '-'));
+            if (!ta) return;
+            const note = ta.value;
+            hostNotes[mac] = note;
+            try {
+                await fetch('/api/hosts/' + encodeURIComponent(mac) + '/notes', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({note: note})
+                });
+            } catch(e) {}
+        }
+
+        function debounceSearch() {
+            if (searchTimeout) clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(searchCommands, 400);
+        }
+
+        async function searchCommands() {
+            const q = document.getElementById('cmd-search').value.trim();
+            const body = document.getElementById('cmd-history-body');
+            if (!q) {
+                body.innerHTML = '<div style="color:var(--text-dim)">Type to search command history...</div>';
+                return;
+            }
+            try {
+                const resp = await fetch('/api/commands/search?q=' + encodeURIComponent(q) + '&limit=50');
+                const data = await resp.json();
+                const cmds = data.commands || [];
+                const tl = data.timeline || [];
+                body.innerHTML = '';
+                if (cmds.length === 0 && tl.length === 0) {
+                    body.innerHTML = '<div style="color:var(--text-dim)">No results for "' + esc(q) + '"</div>';
+                    return;
+                }
+                for (const c of cmds) {
+                    const div = document.createElement('div');
+                    div.className = 'cmd-history-entry';
+                    const ts = (c.timestamp || '').split('T')[1]?.split('Z')[0] || '';
+                    const statusCls = c.allowed ? 'status-ok' : 'status-err';
+                    const statusTxt = c.allowed ? 'allowed' : 'blocked';
+                    div.innerHTML = '<span class="ts">' + esc(ts) + '</span> ' +
+                        '<span class="cmd">' + esc(c.command) + '</span> ' +
+                        '<span class="' + statusCls + '">[' + statusTxt + ']</span>';
+                    body.appendChild(div);
+                }
+                for (const t of tl) {
+                    const div = document.createElement('div');
+                    div.className = 'cmd-history-entry';
+                    const ts = (t.timestamp || '').split('T')[1]?.split('Z')[0] || '';
+                    div.innerHTML = '<span class="ts">' + esc(ts) + '</span> ' +
+                        '<span class="cmd">' + esc(t.command || '') + '</span> ' +
+                        '<span class="' + (t.status === 'success' ? 'status-ok' : 'status-err') + '">[' + esc(t.status || '') + ']</span>';
+                    body.appendChild(div);
+                }
+            } catch(e) { body.innerHTML = '<div style="color:var(--red)">Search error</div>'; }
+        }
 
         // State polling
         let lastPhase = '';
@@ -621,6 +1102,10 @@
                         card.className = 'host-card' + (isExpanded ? ' expanded' : '');
                         card.onclick = () => { expandedHost = isExpanded ? null : h.ip; pollFindings(); };
 
+                        const mac = h.mac || '';
+                        const isStarred = starredMacs.has(mac);
+                        const macSafe = mac.replace(/:/g, '-');
+
                         // Port lines for expanded view
                         let portLines = '';
                         for (const port of (h.ports || [])) {
@@ -633,9 +1118,17 @@
                         }
                         if (!portLines) portLines = '<div style="color:var(--text-dim)">No open ports detected</div>';
 
+                        // Notes for expanded view
+                        const noteVal = hostNotes[mac] || '';
+                        const notesHtml = `<div class="host-notes">
+                            <div class="host-notes-title">OPERATOR NOTES</div>
+                            <textarea id="notes-${macSafe}" placeholder="Add notes about this host..." onblur="saveHostNote('${esc(mac)}')" onclick="event.stopPropagation()">${esc(noteVal)}</textarea>
+                        </div>`;
+
                         card.innerHTML = `
                             <div class="host-card-header">
                                 <div>
+                                    <span class="star-icon ${isStarred ? 'starred' : ''}" onclick="toggleStar('${esc(mac)}', event)">\u2B50</span>
                                     <span class="host-ip">${esc(h.ip)}</span>
                                     ${h.hostname ? `<span class="host-hostname"> (${esc(h.hostname)})</span>` : ''}
                                     <span style="color:var(--text-dim); margin-left:8px">${(h.ports||[]).length} ports</span>
@@ -653,8 +1146,22 @@
                                     <div class="host-history-title">SCAN HISTORY</div>
                                     <div style="color:var(--text-dim);font-size:11px">Loading...</div>
                                 </div>
+                                ${notesHtml}
                             </div>`;
                         hostsBody.appendChild(card);
+
+                        // Load notes for expanded host
+                        if (isExpanded && !hostNotes[mac]) {
+                            fetch('/api/hosts/' + encodeURIComponent(mac) + '/notes')
+                                .then(r => r.json())
+                                .then(data => {
+                                    if (data.note) {
+                                        hostNotes[mac] = data.note;
+                                        const ta = document.getElementById('notes-' + macSafe);
+                                        if (ta) ta.value = data.note;
+                                    }
+                                }).catch(() => {});
+                        }
 
                         // Load history for expanded host
                         if (isExpanded) {

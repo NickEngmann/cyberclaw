@@ -28,12 +28,16 @@ def init_db(log_dir: str):
         PRAGMA synchronous=NORMAL;
 
         CREATE TABLE IF NOT EXISTS networks (
-            cidr TEXT PRIMARY KEY,
-            first_seen TEXT,
-            last_seen TEXT,
+            network_id TEXT PRIMARY KEY,
+            cidr TEXT DEFAULT '',
+            gateway_mac TEXT DEFAULT '',
             ssid TEXT DEFAULT '',
-            gateway TEXT DEFAULT ''
+            public_ip TEXT DEFAULT '',
+            gateway TEXT DEFAULT '',
+            first_seen TEXT,
+            last_seen TEXT
         );
+        CREATE INDEX IF NOT EXISTS idx_networks_cidr ON networks(cidr);
 
         CREATE TABLE IF NOT EXISTS hosts (
             mac TEXT PRIMARY KEY,
@@ -180,24 +184,36 @@ def _ts() -> str:
 
 # ── Networks ─────────────────────────────────────────
 
-def upsert_network(cidr: str, ssid: str = "", gateway: str = ""):
+def upsert_network(network_id: str = "", cidr: str = "", gateway_mac: str = "",
+                    ssid: str = "", public_ip: str = "", gateway: str = ""):
+    """Insert or update a network. network_id is the primary key."""
+    import hashlib
+    if not network_id:
+        # Generate from gateway MAC or CIDR
+        seed = gateway_mac or cidr or "unknown"
+        network_id = hashlib.sha256(seed.encode()).hexdigest()[:12]
     conn = _get_conn()
-    existing = conn.execute("SELECT cidr FROM networks WHERE cidr=?", (cidr,)).fetchone()
+    existing = conn.execute("SELECT network_id FROM networks WHERE network_id=?",
+                            (network_id,)).fetchone()
     if existing:
         updates = ["last_seen=?"]
         params = [_ts()]
-        if ssid:
-            updates.append("ssid=?")
-            params.append(ssid)
-        if gateway:
-            updates.append("gateway=?")
-            params.append(gateway)
-        params.append(cidr)
-        conn.execute(f"UPDATE networks SET {','.join(updates)} WHERE cidr=?", params)
+        for field, val in [("cidr", cidr), ("gateway_mac", gateway_mac),
+                           ("ssid", ssid), ("public_ip", public_ip),
+                           ("gateway", gateway)]:
+            if val:
+                updates.append(f"{field}=?")
+                params.append(val)
+        params.append(network_id)
+        conn.execute(f"UPDATE networks SET {','.join(updates)} WHERE network_id=?", params)
     else:
-        conn.execute("INSERT INTO networks (cidr,first_seen,last_seen,ssid,gateway) VALUES (?,?,?,?,?)",
-                     (cidr, _ts(), _ts(), ssid, gateway))
+        conn.execute(
+            "INSERT INTO networks (network_id,cidr,gateway_mac,ssid,public_ip,gateway,first_seen,last_seen) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (network_id, cidr, gateway_mac, ssid, public_ip, gateway, _ts(), _ts())
+        )
     conn.commit()
+    return network_id
 
 
 def get_networks() -> list:
@@ -228,9 +244,11 @@ def _upsert_host_raw(conn, mac, ip, hostname, network, ports, info):
 
 
 def upsert_host(ip: str, ports: list = None, info: str = "",
-                mac: str = "", hostname: str = "", network: str = ""):
+                mac: str = "", hostname: str = "", network: str = "",
+                network_id: str = ""):
     """Insert or update a host. MAC is preferred key, falls back to IP."""
     conn = _get_conn()
+    network = network_id or network  # prefer network_id
     if not mac:
         mac = _extract_mac(info) or f"unknown-{ip}"
     if not network:
@@ -252,7 +270,8 @@ def upsert_host(ip: str, ports: list = None, info: str = "",
         upsert_network(network)
 
 
-def get_hosts(network: str = None) -> list:
+def get_hosts(network: str = None, network_id: str = None) -> list:
+    network = network_id or network
     conn = _get_conn()
     if network:
         rows = conn.execute(
@@ -270,14 +289,16 @@ def get_hosts(network: str = None) -> list:
              "last_seen": r["last_seen"]} for r in rows]
 
 
-def get_host_count(network: str = None) -> int:
+def get_host_count(network: str = None, network_id: str = None) -> int:
+    network = network_id or network
     conn = _get_conn()
     if network:
         return conn.execute("SELECT COUNT(*) FROM hosts WHERE network=?", (network,)).fetchone()[0]
     return conn.execute("SELECT COUNT(*) FROM hosts").fetchone()[0]
 
 
-def get_total_ports(network: str = None) -> int:
+def get_total_ports(network: str = None, network_id: str = None) -> int:
+    network = network_id or network
     conn = _get_conn()
     if network:
         rows = conn.execute("SELECT ports FROM hosts WHERE network=?", (network,)).fetchall()
@@ -309,7 +330,8 @@ def add_credential(service: str, username: str, password: str,
     conn.commit()
 
 
-def get_credentials(network: str = None) -> list:
+def get_credentials(network: str = None, network_id: str = None) -> list:
+    network = network_id or network
     conn = _get_conn()
     if network:
         rows = conn.execute("SELECT * FROM credentials WHERE network=?", (network,)).fetchall()
@@ -318,7 +340,8 @@ def get_credentials(network: str = None) -> list:
     return [dict(r) for r in rows]
 
 
-def get_cred_count(network: str = None) -> int:
+def get_cred_count(network: str = None, network_id: str = None) -> int:
+    network = network_id or network
     conn = _get_conn()
     if network:
         return conn.execute("SELECT COUNT(*) FROM credentials WHERE network=?", (network,)).fetchone()[0]
@@ -337,7 +360,8 @@ def add_vulnerability(host: str, service: str, vuln: str,
     conn.commit()
 
 
-def get_vulnerabilities(network: str = None) -> list:
+def get_vulnerabilities(network: str = None, network_id: str = None) -> list:
+    network = network_id or network
     conn = _get_conn()
     if network:
         rows = conn.execute("SELECT * FROM vulnerabilities WHERE network=?", (network,)).fetchall()
@@ -346,7 +370,8 @@ def get_vulnerabilities(network: str = None) -> list:
     return [dict(r) for r in rows]
 
 
-def get_vuln_count(network: str = None) -> int:
+def get_vuln_count(network: str = None, network_id: str = None) -> int:
+    network = network_id or network
     conn = _get_conn()
     if network:
         return conn.execute("SELECT COUNT(*) FROM vulnerabilities WHERE network=?", (network,)).fetchone()[0]
@@ -357,20 +382,20 @@ def get_vuln_count(network: str = None) -> int:
 
 def add_timeline(reasoning: str = None, command: str = None,
                  status: str = None, output_preview: str = None,
-                 network: str = ""):
+                 network_id: str = ""):
     conn = _get_conn()
     conn.execute(
         "INSERT INTO timeline (timestamp,reasoning,command,status,output_preview,network) VALUES (?,?,?,?,?,?)",
-        (_ts(), reasoning, command, status, (output_preview or "")[:500], network)
+        (_ts(), reasoning, command, status, (output_preview or "")[:500], network_id)
     )
     conn.commit()
 
 
-def add_timeline_event(event: str, error: str = None, network: str = ""):
+def add_timeline_event(event: str, error: str = None, network_id: str = ""):
     conn = _get_conn()
     conn.execute(
         "INSERT INTO timeline (timestamp,reasoning,command,status,output_preview,network) VALUES (?,?,?,?,?,?)",
-        (_ts(), f"[{event}]", None, "event", error or "", network)
+        (_ts(), f"[{event}]", None, "event", error or "", network_id)
     )
     conn.commit()
 
@@ -390,7 +415,8 @@ def get_timeline(limit: int = 50, network: str = None) -> list:
     return [dict(r) for r in reversed(rows)]
 
 
-def get_timeline_count(network: str = None) -> int:
+def get_timeline_count(network: str = None, network_id: str = None) -> int:
+    network = network_id or network
     conn = _get_conn()
     if network:
         return conn.execute("SELECT COUNT(*) FROM timeline WHERE network=?", (network,)).fetchone()[0]
@@ -424,6 +450,19 @@ def get_commands(limit: int = 100, network: str = None) -> list:
     return [dict(r) for r in reversed(rows)]
 
 
+def get_commands_search(query: str, limit: int = 50) -> list:
+    """Search commands and timeline by keyword."""
+    conn = _get_conn()
+    pattern = f"%{query}%"
+    rows = conn.execute(
+        "SELECT timestamp, reasoning, command, status, output_preview "
+        "FROM timeline WHERE command LIKE ? OR reasoning LIKE ? "
+        "ORDER BY id DESC LIMIT ?",
+        (pattern, pattern, limit)
+    ).fetchall()
+    return [dict(r) for r in reversed(rows)]
+
+
 # ── State (key-value) ────────────────────────────────
 
 def set_state(key: str, value):
@@ -441,31 +480,31 @@ def get_state(key: str, default=None):
 
 # ── Findings summary ─────────────────────────────────
 
-def get_findings_summary(network: str = None) -> dict:
+def get_findings_summary(network_id: str = None) -> dict:
     """Get findings — optionally scoped to a network."""
     return {
         "wifi_connected": get_state("wifi_connected", False),
-        "live_hosts": get_host_count(network),
-        "open_ports": get_total_ports(network),
-        "credentials": get_cred_count(network),
-        "vulnerabilities": get_vuln_count(network),
+        "live_hosts": get_host_count(network_id),
+        "open_ports": get_total_ports(network_id),
+        "credentials": get_cred_count(network_id),
+        "vulnerabilities": get_vuln_count(network_id),
         "impact_documented": get_state("impact_documented", False),
         "cleanup_done": get_state("cleanup_done", False),
-        "hosts": get_hosts(network),
-        "creds": get_credentials(network),
-        "vulns": get_vulnerabilities(network),
+        "hosts": get_hosts(network_id),
+        "creds": get_credentials(network_id),
+        "vulns": get_vulnerabilities(network_id),
         "networks": get_networks(),
     }
 
 
 # ── Export for Thor ──────────────────────────────────
 
-def export_network(network: str = None) -> dict:
+def export_network(network_id: str = None) -> dict:
     """Full export of a network's data for Thor consumption."""
     return {
         "export_time": _ts(),
-        "network": network or "all",
-        "findings": get_findings_summary(network),
-        "timeline": get_timeline(limit=500, network=network),
-        "commands": get_commands(limit=500, network=network),
+        "network": network_id or "all",
+        "findings": get_findings_summary(network_id),
+        "timeline": get_timeline(limit=500, network=network_id),
+        "commands": get_commands(limit=500, network=network_id),
     }

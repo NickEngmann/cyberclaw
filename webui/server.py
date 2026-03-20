@@ -9,7 +9,7 @@ import json
 import os
 import time
 import threading
-from flask import Flask, render_template, jsonify, Response
+from flask import Flask, render_template, jsonify, Response, request
 
 # Try to use SQLite backend
 try:
@@ -313,6 +313,278 @@ def api_networks():
         except Exception:
             pass
     return jsonify([])
+
+
+# ── C2 Control Endpoints ──────────────────────────────────
+
+
+# 1. Star/Prioritize Hosts
+@app.route("/api/hosts/star", methods=["POST"])
+def api_star_host():
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify({"error": "DB not available"}), 503
+    data = request.get_json(force=True)
+    mac = data.get("mac", "")
+    iterations = data.get("iterations", 5)
+    if not mac:
+        return jsonify({"error": "mac required"}), 400
+
+    # Look up IP for this MAC
+    starred = _db.get_state("starred_hosts", [])
+    # Remove existing entry for this MAC (re-star updates iterations)
+    starred = [s for s in starred if s.get("mac") != mac]
+
+    # Resolve IP from hosts table
+    ip = ""
+    try:
+        hosts = _db.get_hosts()
+        for h in hosts:
+            if h.get("mac") == mac:
+                ip = h.get("ip", "")
+                break
+    except Exception:
+        pass
+
+    starred.append({"mac": mac, "ip": ip, "remaining": iterations})
+    _db.set_state("starred_hosts", starred)
+    return jsonify({"ok": True, "starred": starred})
+
+
+@app.route("/api/hosts/star", methods=["DELETE"])
+def api_unstar_host():
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify({"error": "DB not available"}), 503
+    data = request.get_json(force=True)
+    mac = data.get("mac", "")
+    if not mac:
+        return jsonify({"error": "mac required"}), 400
+
+    starred = _db.get_state("starred_hosts", [])
+    starred = [s for s in starred if s.get("mac") != mac]
+    _db.set_state("starred_hosts", starred)
+    return jsonify({"ok": True, "starred": starred})
+
+
+@app.route("/api/hosts/starred")
+def api_starred_hosts():
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify([])
+    return jsonify(_db.get_state("starred_hosts", []))
+
+
+# 2. Force Phase Change
+@app.route("/api/phase", methods=["POST"])
+def api_force_phase():
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify({"error": "DB not available"}), 503
+    data = request.get_json(force=True)
+    phase = data.get("phase", "").lower()
+    valid = ["recon", "enumerate", "exploit", "report", "cleanup"]
+    if phase not in valid:
+        return jsonify({"error": f"Invalid phase. Valid: {valid}"}), 400
+    _db.set_state("forced_phase", phase)
+    return jsonify({"ok": True, "forced_phase": phase})
+
+
+# 3. Pause/Resume Agent
+@app.route("/api/agent/pause", methods=["POST"])
+def api_pause():
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify({"error": "DB not available"}), 503
+    _db.set_state("paused", True)
+    return jsonify({"ok": True, "paused": True})
+
+
+@app.route("/api/agent/resume", methods=["POST"])
+def api_resume():
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify({"error": "DB not available"}), 503
+    _db.set_state("paused", False)
+    return jsonify({"ok": True, "paused": False})
+
+
+@app.route("/api/agent/status")
+def api_agent_status():
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify({"paused": False, "kill_switch": False})
+    return jsonify({
+        "paused": _db.get_state("paused", False),
+        "kill_switch": _db.get_state("kill_switch", False),
+    })
+
+
+# 4. Manual Command Queue
+@app.route("/api/commands/queue", methods=["POST"])
+def api_queue_command():
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify({"error": "DB not available"}), 503
+    data = request.get_json(force=True)
+    cmd = data.get("command", "").strip()
+    if not cmd:
+        return jsonify({"error": "command required"}), 400
+    queue = _db.get_state("command_queue", [])
+    queue.append(cmd)
+    _db.set_state("command_queue", queue)
+    return jsonify({"ok": True, "queue": queue})
+
+
+@app.route("/api/commands/queue", methods=["GET"])
+def api_get_queue():
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify([])
+    return jsonify(_db.get_state("command_queue", []))
+
+
+# 5. Tool Preferences
+@app.route("/api/tools/preferences", methods=["POST"])
+def api_set_tool_prefs():
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify({"error": "DB not available"}), 503
+    data = request.get_json(force=True)
+    prefs = {
+        "disabled": data.get("disabled", []),
+        "preferred": data.get("preferred", []),
+    }
+    _db.set_state("tool_preferences", prefs)
+    return jsonify({"ok": True, "preferences": prefs})
+
+
+@app.route("/api/tools/preferences", methods=["GET"])
+def api_get_tool_prefs():
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify({"disabled": [], "preferred": []})
+    return jsonify(_db.get_state("tool_preferences",
+                                 {"disabled": [], "preferred": []}))
+
+
+# 6. Host Notes
+@app.route("/api/hosts/<mac>/notes", methods=["POST"])
+def api_set_host_note(mac):
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify({"error": "DB not available"}), 503
+    data = request.get_json(force=True)
+    note = data.get("note", "")
+    notes = _db.get_state("host_notes", {})
+    notes[mac] = note
+    _db.set_state("host_notes", notes)
+    return jsonify({"ok": True, "mac": mac, "note": note})
+
+
+@app.route("/api/hosts/<mac>/notes", methods=["GET"])
+def api_get_host_note(mac):
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify({"note": ""})
+    notes = _db.get_state("host_notes", {})
+    return jsonify({"note": notes.get(mac, "")})
+
+
+# 7. Kill Switch
+@app.route("/api/killswitch", methods=["POST"])
+def api_killswitch():
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify({"error": "DB not available"}), 503
+    _db.set_state("kill_switch", True)
+    _db.set_state("paused", True)
+    return jsonify({"ok": True, "kill_switch": True})
+
+
+# 8. Agent Config
+@app.route("/api/config", methods=["GET"])
+def api_get_config():
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify({"temperature": 0.7, "max_tokens": 512})
+    defaults = {"temperature": 0.7, "max_tokens": 512}
+    return jsonify(_db.get_state("agent_config", defaults))
+
+
+@app.route("/api/config", methods=["PATCH"])
+def api_patch_config():
+    if not _HAS_DB or not _db.DB_PATH:
+        return jsonify({"error": "DB not available"}), 503
+    data = request.get_json(force=True)
+    config = _db.get_state("agent_config",
+                           {"temperature": 0.7, "max_tokens": 512})
+    for k, v in data.items():
+        config[k] = v
+    _db.set_state("agent_config", config)
+    return jsonify({"ok": True, "config": config})
+
+
+# 9. Command History Search
+@app.route("/api/commands/search")
+def api_search_commands():
+    q = request.args.get("q", "").strip()
+    limit = min(int(request.args.get("limit", 50)), 500)
+    if not q:
+        return jsonify([])
+
+    if _HAS_DB and _db.DB_PATH:
+        try:
+            from agent.db import _get_conn
+            conn = _get_conn()
+            rows = conn.execute(
+                "SELECT timestamp, command, allowed, reason, result_status "
+                "FROM commands WHERE command LIKE ? ORDER BY id DESC LIMIT ?",
+                (f"%{q}%", limit)
+            ).fetchall()
+            results = [dict(r) for r in reversed(rows)]
+
+            # Also search timeline
+            tl_rows = conn.execute(
+                "SELECT timestamp, reasoning, command, status, output_preview "
+                "FROM timeline WHERE command LIKE ? OR reasoning LIKE ? "
+                "ORDER BY id DESC LIMIT ?",
+                (f"%{q}%", f"%{q}%", limit)
+            ).fetchall()
+            tl_results = [dict(r) for r in reversed(tl_rows)]
+
+            return jsonify({"commands": results, "timeline": tl_results})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # Fallback: search JSONL files
+    log_dir = os.environ.get("NC_LOG_DIR",
+                             os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs"))
+    results = []
+    cmds_path = os.path.join(log_dir, "commands.jsonl")
+    if os.path.exists(cmds_path):
+        with open(cmds_path) as f:
+            for line in f:
+                if q.lower() in line.lower():
+                    try:
+                        results.append(json.loads(line.strip()))
+                    except json.JSONDecodeError:
+                        pass
+    return jsonify({"commands": results[-limit:], "timeline": []})
+
+
+# 10. Network Info
+@app.route("/api/network/current")
+def api_network_current():
+    if _HAS_DB and _db.DB_PATH:
+        try:
+            nets = _db.get_networks()
+            if nets:
+                # Most recently seen network
+                latest = max(nets, key=lambda n: n.get("last_seen", ""))
+                info = {
+                    "cidr": latest.get("cidr", ""),
+                    "ssid": latest.get("ssid", ""),
+                    "gateway": latest.get("gateway", ""),
+                    "first_seen": latest.get("first_seen", ""),
+                    "last_seen": latest.get("last_seen", ""),
+                }
+                # Uptime from agent start
+                wifi = _db.get_state("wifi_connected", False)
+                info["wifi_connected"] = wifi
+
+                # Try to get public IP from state
+                info["public_ip"] = _db.get_state("public_ip", "unknown")
+                return jsonify(info)
+        except Exception:
+            pass
+    return jsonify({"cidr": "", "ssid": "", "gateway": "",
+                    "wifi_connected": False, "public_ip": "unknown"})
 
 
 def get_tailscale_ip() -> str:

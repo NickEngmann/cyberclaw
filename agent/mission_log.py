@@ -13,21 +13,74 @@ import time
 from agent import db
 
 
-def _detect_network() -> str:
-    """Detect current network CIDR from ip route or scope config."""
+def _detect_network_identity() -> dict:
+    """Collect full network identity: gateway MAC, SSID, public IP, CIDR."""
+    import hashlib
+    identity = {"cidr": "", "gateway_mac": "", "ssid": "", "public_ip": "",
+                "gateway": "", "network_id": ""}
+
+    # CIDR from wlan0
     try:
-        result = subprocess.run(
-            ["ip", "addr", "show", "wlan0"],
-            capture_output=True, text=True, timeout=5,
-        )
+        result = subprocess.run(["ip", "addr", "show", "wlan0"],
+                                capture_output=True, text=True, timeout=5)
         match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)/(\d+)', result.stdout)
         if match:
             import ipaddress
             net = ipaddress.ip_network(f"{match.group(1)}/{match.group(2)}", strict=False)
-            return str(net)
+            identity["cidr"] = str(net)
     except Exception:
         pass
-    return "192.168.1.0/24"  # fallback
+
+    # Gateway IP from default route
+    try:
+        result = subprocess.run(["ip", "route", "show", "default"],
+                                capture_output=True, text=True, timeout=5)
+        match = re.search(r'default via (\d+\.\d+\.\d+\.\d+)', result.stdout)
+        if match:
+            identity["gateway"] = match.group(1)
+    except Exception:
+        pass
+
+    # Gateway MAC from ARP
+    if identity["gateway"]:
+        try:
+            result = subprocess.run(["ip", "neigh", "show", identity["gateway"]],
+                                    capture_output=True, text=True, timeout=5)
+            match = re.search(r'([0-9a-fA-F:]{17})', result.stdout)
+            if match:
+                identity["gateway_mac"] = match.group(1).upper()
+        except Exception:
+            pass
+
+    # SSID
+    try:
+        result = subprocess.run(["iwgetid", "-r"],
+                                capture_output=True, text=True, timeout=5)
+        ssid = result.stdout.strip()
+        if ssid:
+            identity["ssid"] = ssid
+    except Exception:
+        pass
+
+    # Public IP (best-effort, may fail on air-gapped)
+    try:
+        result = subprocess.run(["curl", "-s", "--connect-timeout", "3",
+                                 "https://ifconfig.me"],
+                                capture_output=True, text=True, timeout=5)
+        ip = result.stdout.strip()
+        if re.match(r'\d+\.\d+\.\d+\.\d+', ip):
+            identity["public_ip"] = ip
+    except Exception:
+        pass
+
+    # Generate network_id from gateway MAC (unique per router)
+    seed = identity["gateway_mac"] or identity["cidr"] or "unknown"
+    identity["network_id"] = hashlib.sha256(seed.encode()).hexdigest()[:12]
+
+    if not identity["cidr"]:
+        identity["cidr"] = "192.168.1.0/24"  # fallback
+
+    return identity
 
 
 class MissionLog:
@@ -35,9 +88,18 @@ class MissionLog:
 
     def __init__(self, log_dir: str):
         self.log_dir = log_dir
-        self.network = _detect_network()
+        net_info = _detect_network_identity()
+        self.network_id = net_info["network_id"]
+        self.network_cidr = net_info["cidr"]
         db.init_db(log_dir)
-        db.upsert_network(self.network)
+        db.upsert_network(
+            network_id=self.network_id,
+            cidr=net_info["cidr"],
+            gateway_mac=net_info["gateway_mac"],
+            ssid=net_info["ssid"],
+            public_ip=net_info["public_ip"],
+            gateway=net_info["gateway"],
+        )
 
         # Migrate existing JSON files into SQLite (one-time)
         findings_path = os.path.join(log_dir, "findings.json")
@@ -50,12 +112,12 @@ class MissionLog:
         status = result.get("status", "unknown")
         db.add_timeline(reasoning=reasoning, command=command,
                         status=status, output_preview=output_preview,
-                        network=self.network)
+                        network_id=self.network_id)
         self._auto_extract(command, result)
         self._write_compat_files(command, result, reasoning)
 
     def record_error(self, error: Exception):
-        db.add_timeline_event("error", str(error), network=self.network)
+        db.add_timeline_event("error", str(error), network_id=self.network_id)
         self._append_jsonl({
             "timestamp": self._ts(), "event": "error",
             "error": str(error)
@@ -68,23 +130,23 @@ class MissionLog:
     def add_host(self, ip: str, ports: list = None, info: str = "",
                  mac: str = "", hostname: str = ""):
         db.upsert_host(ip=ip, ports=ports, info=info,
-                       mac=mac, hostname=hostname, network=self.network)
+                       mac=mac, hostname=hostname, network_id=self.network_id)
         self._save_findings_json()
 
     def add_credential(self, service: str, username: str, password: str,
                        host: str = ""):
         db.add_credential(service, username, password, host,
-                          network=self.network)
+                          network_id=self.network_id)
         self._save_findings_json()
 
     def add_vulnerability(self, host: str, service: str, vuln: str,
                           severity: str = "medium"):
         db.add_vulnerability(host, service, vuln, severity,
-                             network=self.network)
+                             network_id=self.network_id)
         self._save_findings_json()
 
     def get_findings_summary(self) -> dict:
-        return db.get_findings_summary(network=self.network)
+        return db.get_findings_summary(network_id=self.network_id)
 
     def finalize(self):
         db.set_state("cleanup_done", True)
@@ -137,7 +199,7 @@ class MissionLog:
         try:
             path = os.path.join(self.log_dir, "findings.json")
             with open(path, "w") as f:
-                json.dump(db.get_findings_summary(self.network), f, indent=2)
+                json.dump(db.get_findings_summary(self.network_id), f, indent=2)
         except IOError:
             pass
 
