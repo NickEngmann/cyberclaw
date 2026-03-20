@@ -11,7 +11,7 @@ mission:
 model:
   local:
     path: "/opt/nightcrawler/models/Qwen3.5-2B-Q8_0.gguf"
-    ctx_size: 4096
+    ctx_size: 8192
     threads: 4
     port: 8080
   fallback:

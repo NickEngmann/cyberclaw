@@ -85,7 +85,7 @@ if [ -r ${START_SEMAPHOR} ] ; then
             cd ${KERNEL_DIR}
 
             nohup ${TERMUX_HOME}/llama.cpp/build-fast/bin/llama-server \
-                -m ${MODEL} -ngl 99 -c 4096 -t 4 \
+                -m ${MODEL} -ngl 99 -c 8192 -t 4 \
                 --port ${PORT} --host 0.0.0.0 \
                 --jinja --reasoning off --log-disable \
                 > ${LLAMA_LOG} 2>&1 &

@@ -29,7 +29,7 @@ class AgentLoop:
         self.llm = llm_client
         self.proxy_url = proxy_url
         self.ui = ui
-        self.context = ContextManager(max_tokens=2800)
+        self.context = ContextManager(max_tokens=6000)
         self.planner = PhasePlanner(config)
         self.mission_log = MissionLog(
             config.get("logging", {}).get("dir", "logs")
