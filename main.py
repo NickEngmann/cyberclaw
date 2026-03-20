@@ -134,11 +134,23 @@ async def main():
         ui=ui,
     )
 
-    # If already connected, skip WiFi breach — go straight to recon
+    # If already connected, skip WiFi breach — check existing data for phase
     if check_network_connectivity():
-        loop.planner.current_phase = Phase.RECON
         loop.mission_log.set_finding("wifi_connected", True)
         ui.wifi_up = True
+        # Evaluate existing findings to determine correct starting phase
+        findings = loop.mission_log.get_findings_summary()
+        hosts = findings.get("live_hosts", 0)
+        creds = findings.get("credentials", 0)
+        if creds > 0 or findings.get("vulnerabilities", 0) > 0:
+            loop.planner.current_phase = Phase.EXPLOIT
+            print(f"  {C.GREEN}[INIT]{C.RESET} Resuming at EXPLOIT ({creds} creds, {hosts} hosts)")
+        elif hosts >= 3:
+            loop.planner.current_phase = Phase.ENUMERATE
+            print(f"  {C.GREEN}[INIT]{C.RESET} Resuming at ENUMERATE ({hosts} hosts)")
+        else:
+            loop.planner.current_phase = Phase.RECON
+            print(f"  {C.GREEN}[INIT]{C.RESET} Starting at RECON")
         print(f"  {C.GREEN}[INIT]{C.RESET} Network detected — skipping WiFi breach, starting at RECON")
 
     try:
