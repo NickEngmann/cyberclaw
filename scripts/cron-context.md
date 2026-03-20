@@ -40,6 +40,12 @@ the agent has learned. Red teamer edits via the UI also appear here.
 - Dead-end hosts should be marked as such (status: dead-end)
 - The memory context is capped at 200 tokens to avoid bloating the system prompt
 
+## Training Data
+The agent captures successful interactions to /root/nightcrawler/training_data/ for finetuning.
+- Check stats: `curl -sk https://100.90.85.96:8888/api/training/stats`
+- 20GB budget with auto-rotation
+- Only captures successful REASONING+COMMAND pairs that executed successfully
+
 ## Common Issues
 - Model produces garbage ~50%: handled by garbage detection, 5-streak resets context
 - Model refuses pentest: handled by refusal detection, re-prompts with auth context

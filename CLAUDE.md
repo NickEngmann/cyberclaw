@@ -179,6 +179,15 @@ The web UI at `:8888` has full C2 controls:
 - Features: clickable host cards, port details, scan history, network selector, Thor export
 - Reads from SQLite + JSON files (survives agent crashes)
 
+## IMPORTANT: Always Restart Agent After Code Changes
+After modifying agent/loop.py, agent/*.py, or main.py:
+1. `pkill -9 -f "python3 main.py"`
+2. `nohup python3 main.py >> /tmp/nc-agent.log 2>&1 &`
+3. Verify: `sleep 3 && kill -0 $(pgrep -f "python3 main.py") && echo OK`
+The agent does NOT hot-reload Python code. Forgetting to restart is the #1 cause
+of "agent down" during development. The WebUI daemon also needs restart for
+server.py changes: `bash scripts/webui-daemon.sh restart`
+
 ## IMPORTANT: Clean Up Test Artifacts
 After ANY testing that creates data in the DB (test networks, test hosts, demo data):
 - **Delete test networks**: `DELETE FROM networks WHERE network_id NOT IN ('<real_id>')`

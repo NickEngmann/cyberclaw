@@ -1044,6 +1044,11 @@
                     lastPhase = state.phase;
                 }
                 phaseEl.textContent = state.phase;
+                // Highlight current phase button
+                ['recon','enumerate','exploit'].forEach(p => {
+                    const btn = document.getElementById('phase-' + p);
+                    if (btn) btn.style.borderColor = (state.phase||'').toLowerCase().includes(p) ? 'var(--green)' : 'var(--border)';
+                });
                 document.getElementById('s-mode').textContent = state.mode;
                 document.getElementById('s-uptime').textContent = state.uptime;
                 document.getElementById('s-watchdog').textContent = state.watchdog;
