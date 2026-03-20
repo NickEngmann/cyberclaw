@@ -345,6 +345,63 @@ def api_edit_network(network_id):
     return jsonify({"ok": True, "network_id": network_id})
 
 
+# ── Host Memory Endpoints ─────────────────────────────────
+
+@app.route("/api/hosts/<mac>/memory")
+def api_get_host_memory(mac):
+    """Get memory/observations for a host."""
+    try:
+        from agent.host_memory import get_memory
+        return jsonify(get_memory(mac))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/hosts/<mac>/memory", methods=["PATCH"])
+def api_edit_host_memory(mac):
+    """Edit host memory — add observations, change status, tags, avoid_tools."""
+    try:
+        from agent import host_memory
+        data = request.get_json(force=True)
+
+        if "observation" in data:
+            host_memory.add_observation(mac, data["observation"],
+                                        source="analyst", ip=data.get("ip", ""))
+        if "status" in data:
+            host_memory.update_status(mac, data["status"])
+        if "tags" in data:
+            mem = host_memory.get_memory(mac)
+            if mem:
+                mem["tags"] = data["tags"]
+                host_memory.set_memory(mac, mem)
+        if "avoid_tools" in data:
+            host_memory.set_avoid_tools(mac, data["avoid_tools"])
+
+        return jsonify({"ok": True, "memory": host_memory.get_memory(mac)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/hosts/memories")
+def api_all_host_memories():
+    """Get all host memories."""
+    try:
+        from agent.host_memory import get_all_memories
+        return jsonify(get_all_memories())
+    except Exception:
+        return jsonify({})
+
+
+@app.route("/api/hosts/memories/export")
+def api_export_memories():
+    """Export all host memories for Thor."""
+    try:
+        from agent.host_memory import export_memories
+        return jsonify(export_memories())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ── C2 Control Endpoints ──────────────────────────────────
 
 

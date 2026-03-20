@@ -513,6 +513,7 @@ def export_network(network_id: str = None) -> dict:
         "blacklisted_hosts": get_state("blacklisted_hosts", []),
         "starred_hosts": get_state("starred_hosts", []),
         "host_notes": get_state("host_notes", {}),
+        "host_memories": get_state("host_memories", {}),
         "network_notes": get_state("network_notes", {}),
         "network_names": get_state("network_names", {}),
         "tool_preferences": get_state("tool_preferences", {}),

@@ -10,6 +10,7 @@ from agent.watchdog import Watchdog
 from agent.mission_log import MissionLog
 
 from agent import db
+from agent import host_memory
 
 try:
     from webui.server import update_state, push_feed
@@ -212,6 +213,11 @@ class AgentLoop:
                     if notes_text:
                         system += f"\nANALYST NOTES:{notes_text}"
 
+                # Add host memory (compact — max 200 tokens)
+                memory_ctx = host_memory.build_prompt_context(max_tokens=200)
+                if memory_ctx:
+                    system += f"\n{memory_ctx}"
+
                 messages = self.context.get_messages()
 
                 # Call LLM
@@ -298,6 +304,29 @@ class AgentLoop:
                     self.total_commands += 1
                     if result.get("status") == "blocked":
                         self.total_blocked += 1
+
+                    # Auto-extract host observations into memory
+                    try:
+                        import re as _re
+                        ips_in_cmd = _re.findall(r'192\.168\.1\.\d+', command)
+                        for ip in set(ips_in_cmd):
+                            # Look up MAC for this IP
+                            mac = ""
+                            try:
+                                for h in db.get_hosts():
+                                    if h["ip"] == ip:
+                                        mac = h["mac"]
+                                        break
+                            except Exception:
+                                pass
+                            if mac:
+                                host_memory.auto_extract_observations(
+                                    ip, mac, command,
+                                    result.get("output", ""),
+                                    result.get("status", "")
+                                )
+                    except Exception:
+                        pass
 
                     # WiFi connect detection
                     if ("wpa_supplicant" in command or

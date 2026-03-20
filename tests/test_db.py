@@ -159,3 +159,41 @@ class TestCommandSearch:
     def test_search_empty(self, populated_db):
         results = db.get_commands_search("nonexistent_tool_xyz", limit=10)
         assert len(results) == 0
+
+
+class TestHostMemory:
+    """Test host memory system."""
+
+    def test_add_observation(self, tmp_db):
+        from agent.host_memory import add_observation, get_memory
+        add_observation("AA:BB:CC:DD:EE:FF", "Pi-hole detected", source="agent", ip="192.168.1.2")
+        mem = get_memory("AA:BB:CC:DD:EE:FF")
+        assert len(mem["observations"]) == 1
+        assert "Pi-hole" in mem["observations"][0]["text"]
+
+    def test_auto_extract(self, tmp_db):
+        from agent.host_memory import auto_extract_observations, get_memory
+        db.upsert_host(ip="192.168.1.2", mac="AA:BB:CC:DD:EE:FF")
+        auto_extract_observations(
+            "192.168.1.2", "AA:BB:CC:DD:EE:FF",
+            "curl -s -I http://192.168.1.2/",
+            "HTTP/1.1 403 Forbidden\nServer: lighttpd/1.4.53\n",
+            "success"
+        )
+        mem = get_memory("AA:BB:CC:DD:EE:FF")
+        assert len(mem["observations"]) >= 1
+        assert any("lighttpd" in o["text"] for o in mem["observations"])
+
+    def test_build_prompt_context(self, tmp_db):
+        from agent.host_memory import add_observation, build_prompt_context
+        add_observation("AA:BB:CC:DD:EE:FF", "Test observation", ip="192.168.1.2")
+        ctx = build_prompt_context(max_tokens=200)
+        assert "HOST MEMORY" in ctx
+        assert "192.168.1.2" in ctx
+
+    def test_export(self, tmp_db):
+        from agent.host_memory import add_observation, export_memories
+        add_observation("AA:BB:CC:DD:EE:FF", "Test", ip="192.168.1.2")
+        export = export_memories()
+        assert "host_memories" in export
+        assert "AA:BB:CC:DD:EE:FF" in export["host_memories"]
