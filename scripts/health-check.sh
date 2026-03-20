@@ -86,13 +86,23 @@ if [ -n "$AGENT_PID" ]; then
     fi
 fi
 
-# ── 6. Agent progress (stall detection) ──────────────
+# ── 6. Agent progress (stall detection + auto-restart) ──
 TIMELINE="$LOG_DIR/timeline.jsonl"
 if [ -f "$TIMELINE" ]; then
     LAST_MOD=$(stat -c %Y "$TIMELINE" 2>/dev/null || echo 0)
     NOW=$(date +%s)
     AGE=$(( (NOW - LAST_MOD) / 60 ))
-    if [ "$AGE" -gt 15 ]; then
+    if [ "$AGE" -gt 30 ]; then
+        echo "  [WARN] timeline stale ${AGE}m — auto-restarting agent" >> "$HEALTH_LOG"
+        NOTES="${NOTES}auto-restart-stale-${AGE}m "
+        # Auto-restart: kill agent, clear timeline, restart
+        pkill -9 -f "python3 main.py" 2>/dev/null
+        sleep 2
+        cd "$NC_HOME"
+        : > "$TIMELINE"  # clear stale timeline
+        nohup python3 main.py >> /tmp/nc-agent.log 2>&1 &
+        echo "  [INFO] agent restarted (PID $!)" >> "$HEALTH_LOG"
+    elif [ "$AGE" -gt 15 ]; then
         echo "  [WARN] timeline.jsonl stale (${AGE}m old)" >> "$HEALTH_LOG"
         NOTES="${NOTES}stale-${AGE}m "
     fi

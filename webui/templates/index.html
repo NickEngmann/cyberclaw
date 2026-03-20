@@ -1069,14 +1069,17 @@
                 const feed = state.feed || [];
                 document.getElementById('feed-count').textContent = feed.length;
 
-                // Only re-render if new entries
-                if (feed.length > feedBody.children.length || feedBody.children.length === 1) {
-                    const startIdx = Math.max(0, feed.length - 50);
-                    feedBody.innerHTML = '';
+                // Only append NEW entries (no full re-render, no flash)
+                const currentCount = feedBody.children.length;
+                if (feed.length > currentCount || currentCount <= 1) {
+                    const startIdx = currentCount <= 1 ? Math.max(0, feed.length - 50) : currentCount;
+                    if (startIdx === 0 || currentCount <= 1) feedBody.innerHTML = '';
                     for (let i = startIdx; i < feed.length; i++) {
                         feedBody.appendChild(createFeedEntry(feed[i]));
                     }
-                    feedBody.scrollTop = feedBody.scrollHeight;
+                    // Only auto-scroll if user is near the bottom
+                    const nearBottom = feedBody.scrollHeight - feedBody.scrollTop - feedBody.clientHeight < 100;
+                    if (nearBottom) feedBody.scrollTop = feedBody.scrollHeight;
                 }
 
                 // Hosts and creds/vulns are rendered by pollFindings only

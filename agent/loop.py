@@ -268,6 +268,16 @@ class AgentLoop:
                     push_feed("thought", reasoning)
 
                 if command:
+                    # Validate command before execution
+                    if not self._is_valid_command(command):
+                        self.garbage_streak += 1
+                        push_feed("warning", f"Invalid cmd rejected: {command[:40]}")
+                        self.context.append_user(
+                            "Invalid command. Use real tools like: nmap, curl, dig, smbclient. "
+                            "REASONING: [text] COMMAND: [single valid command]"
+                        )
+                        continue
+
                     # Duplicate command detection
                     if self._is_duplicate(command):
                         self.ui.render_warning(f"Duplicate command: {command[:60]}")
@@ -351,6 +361,18 @@ class AgentLoop:
                         if result.get("status") == "success":
                             self.llm.notify_wifi_connected()
                             self.mission_log.set_finding("wifi_connected", True)
+
+                    # Reset context after each command — host memory provides
+                    # persistent knowledge, so we don't need to carry context
+                    # about previous hosts. Fresh context = better rotation.
+                    self.context.clear()
+                    output_summary = result.get("output", "")[:300]
+                    self.context.append_user(
+                        f"[LAST COMMAND]: {command}\n"
+                        f"[RESULT]: {output_summary}\n\n"
+                        "Now pick a DIFFERENT host. "
+                        "REASONING: [text] COMMAND: [command]"
+                    )
                 else:
                     # No command produced — track streak
                     self.garbage_streak += 1
@@ -508,6 +530,23 @@ class AgentLoop:
             db.set_state("starred_hosts", updated)
 
         return "continue"
+
+    @staticmethod
+    def _is_valid_command(command: str) -> bool:
+        """Reject obviously invalid commands before they hit the executor."""
+        if not command or len(command) < 2:
+            return False
+        # Reject if the command IS a format tag
+        cmd_lower = command.lower().strip()
+        if cmd_lower in ('command:', 'reasoning:', 'command', 'reasoning'):
+            return False
+        # Reject if starts with backtick (parser missed it)
+        if command.startswith('`'):
+            return False
+        # Must start with a plausible tool name (letter or /)
+        if not command[0].isalpha() and command[0] != '/':
+            return False
+        return True
 
     def _is_duplicate(self, command: str) -> bool:
         """Check if same command was run in last 3 turns."""
