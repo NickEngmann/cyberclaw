@@ -37,3 +37,6 @@ nightcrawler-finetuning-logs.md
 # Health logs
 logs/health.log
 .claude/worktrees/
+
+# Training data (large, managed separately)
+training_data/

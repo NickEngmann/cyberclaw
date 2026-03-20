@@ -345,6 +345,29 @@ def api_edit_network(network_id):
     return jsonify({"ok": True, "network_id": network_id})
 
 
+# ── Training Data Endpoints ───────────────────────────────
+
+@app.route("/api/training/stats")
+def api_training_stats():
+    """Get training data statistics."""
+    try:
+        from agent.training_capture import get_stats
+        return jsonify(get_stats())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/training/export/<format>")
+def api_training_export(format):
+    """Export training data for finetuning. Formats: chatml, jsonl, conversations."""
+    try:
+        from agent.training_capture import export_for_finetuning
+        path, count = export_for_finetuning(format)
+        return jsonify({"path": path, "count": count, "format": format})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ── Host Memory Endpoints ─────────────────────────────────
 
 @app.route("/api/hosts/<mac>/memory")

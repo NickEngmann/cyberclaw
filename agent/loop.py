@@ -11,6 +11,7 @@ from agent.mission_log import MissionLog
 
 from agent import db
 from agent import host_memory
+from agent import training_capture
 
 try:
     from webui.server import update_state, push_feed
@@ -304,6 +305,22 @@ class AgentLoop:
                     self.total_commands += 1
                     if result.get("status") == "blocked":
                         self.total_blocked += 1
+
+                    # Capture successful interactions for finetuning
+                    if status == "success" and reasoning and command:
+                        try:
+                            training_capture.capture_successful_interaction(
+                                system_prompt=system,
+                                messages=messages,
+                                response=response,
+                                reasoning=reasoning,
+                                command=command,
+                                result=result,
+                                phase=self.planner.phase_name,
+                                network_id=getattr(self.mission_log, 'network_id', ''),
+                            )
+                        except Exception:
+                            pass  # never let training capture crash the agent
 
                     # Auto-extract host observations into memory
                     try:
