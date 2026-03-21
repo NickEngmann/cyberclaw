@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+import time
 
 from agent.llm_client import LLMClient
 from agent.planner import PhasePlanner
@@ -26,6 +27,7 @@ class AgentLoop:
     MAX_CONSECUTIVE_ERRORS = 8
     RETRY_DELAYS = [2, 3, 5, 8, 10, 15, 20, 30]
     HEARTBEAT_INTERVAL = 10
+    STUCK_TIMEOUT_SEC = 300  # 5 min without a command = stuck
 
     def __init__(self, config: dict, llm_client: LLMClient,
                  proxy_url: str, ui):
@@ -42,6 +44,8 @@ class AgentLoop:
         self.consecutive_errors = 0
         self.garbage_streak = 0
         self.recent_commands = []  # last N commands for dup detection
+        self.last_executed_ip = ""  # for same-host enforcement
+        self.last_command_time = time.time()  # for time-based stuck detection
         self.iteration = 0
         self.total_commands = 0
         self.total_blocked = 0
@@ -196,6 +200,15 @@ class AgentLoop:
                     self.total_commands += 1
                     continue
 
+                # Fix #3: Time-based stuck detection — if no command
+                # executed in 5 min, force context reset regardless of
+                # streak count. Catches all stuck patterns.
+                if time.time() - self.last_command_time > self.STUCK_TIMEOUT_SEC:
+                    self.ui.render_warning("5min stuck — forcing context reset")
+                    push_feed("warning", "Stuck >5min, auto-reset")
+                    self._reset_context_with_fewshot()
+                    self.last_command_time = time.time()  # prevent rapid-fire resets
+
                 # Build system prompt with phase context
                 system = self._build_system_prompt()
 
@@ -273,12 +286,7 @@ class AgentLoop:
                     if self.garbage_streak >= 5:
                         self.ui.render_warning("5 garbage streak — resetting context")
                         push_feed("warning", "Context reset after 5 garbage")
-                        self.context.clear()
-                        self.context.append_user(
-                            f"Context was reset. You are in {self.planner.phase_name}. "
-                            "REASONING: [analysis] COMMAND: [single command]"
-                        )
-                        self.garbage_streak = 0
+                        self._reset_context_with_fewshot()
                     else:
                         self.context.append_user(
                             "Your output was malformed. "
@@ -315,6 +323,21 @@ class AgentLoop:
                         )
                         continue
 
+                    # Fix #1: Same-host enforcement — one action per host
+                    # per turn. Reject commands targeting the same IP as
+                    # the last executed command (stealth: spread activity).
+                    if self.last_executed_ip and target_ips:
+                        if target_ips[0] == self.last_executed_ip:
+                            self.garbage_streak += 1
+                            push_feed("warning",
+                                      f"Same host rejected: {target_ips[0]}")
+                            self.context.append_user(
+                                f"You just scanned {target_ips[0]}. "
+                                "ROTATE to a DIFFERENT host for stealth. "
+                                "REASONING: [text] COMMAND: [different host]"
+                            )
+                            continue
+
                     # Validate command before execution
                     if not self._is_valid_command(command):
                         self.garbage_streak += 1
@@ -327,18 +350,30 @@ class AgentLoop:
 
                     # Duplicate command detection
                     if self._is_duplicate(command):
-                        self.ui.render_warning(f"Duplicate command: {command[:60]}")
-                        push_feed("warning", f"Dup cmd: {command[:60]}")
-                        self.context.append_user(
-                            f"You already ran '{command[:80]}'. "
-                            "Try a DIFFERENT approach or tool. "
-                            "REASONING: [new analysis] COMMAND: [different command]"
-                        )
+                        self.garbage_streak += 1
+                        self.ui.render_warning(
+                            f"Dup command (streak {self.garbage_streak}): {command[:60]}")
+                        push_feed("warning",
+                                  f"Dup #{self.garbage_streak}: {command[:40]}")
+                        if self.garbage_streak >= 5:
+                            self.ui.render_warning("5 dup streak — resetting context")
+                            push_feed("warning", "Context reset: dup loop")
+                            self._reset_context_with_fewshot()
+                        else:
+                            self.context.append_user(
+                                f"You already ran '{command[:80]}'. "
+                                "Try a DIFFERENT approach or tool. "
+                                "REASONING: [new analysis] COMMAND: [different command]"
+                            )
                         continue
 
                     self.recent_commands.append(command)
                     if len(self.recent_commands) > 5:
                         self.recent_commands.pop(0)
+
+                    # Fix #4: Deduplicate ports in nmap -p lists
+                    if 'nmap' in command and '-p' in command:
+                        command = self._dedup_ports(command)
 
                     self.ui.render_command(command)
                     push_feed("command", command)
@@ -360,6 +395,9 @@ class AgentLoop:
                         push_feed("result", preview)
 
                     self.total_commands += 1
+                    self.last_command_time = time.time()
+                    if target_ips:
+                        self.last_executed_ip = target_ips[0]
                     if result.get("status") == "blocked":
                         self.total_blocked += 1
 
@@ -511,12 +549,7 @@ class AgentLoop:
                     if self.garbage_streak >= 5:
                         self.ui.render_warning("5 no-command streak — resetting context")
                         push_feed("warning", "Context reset: no commands")
-                        self.context.clear()
-                        self.context.append_user(
-                            "Enumerate services on 192.168.1.2. "
-                            "REASONING: [text] COMMAND: [command]"
-                        )
-                        self.garbage_streak = 0
+                        self._reset_context_with_fewshot()
                     else:
                         self.context.append_user(
                             "You MUST include a COMMAND line. "
@@ -567,7 +600,13 @@ class AgentLoop:
         self.mission_log.finalize()
 
     async def _execute(self, command: str, max_retries: int = 2) -> dict:
-        """Send command through scope proxy."""
+        """Send command through scope proxy.
+
+        Only retries on transport errors (proxy unreachable).
+        Command execution errors (exit code != 0) are NOT retried — the
+        command ran, it just failed, and retrying won't help (plus the
+        proxy audit-logs each attempt, causing triple entries).
+        """
         import httpx
         last_error = None
         for attempt in range(max_retries + 1):
@@ -577,14 +616,7 @@ class AgentLoop:
                         f"{self.proxy_url}/execute",
                         json={"command": command},
                     )
-                    result = resp.json()
-                    if result.get("status") == "blocked":
-                        return result
-                    if (result.get("status") == "error" and
-                            attempt < max_retries):
-                        await asyncio.sleep(2 ** attempt)
-                        continue
-                    return result
+                    return resp.json()
             except Exception as e:
                 last_error = str(e)
                 if attempt < max_retries:
@@ -681,8 +713,18 @@ class AgentLoop:
         # Reject fake file paths that don't exist
         if '/path/to/' in command or '/home/user/' in command:
             return False
+        # Reject placeholder tokens (model failed to substitute a real value)
+        if re.search(r'<(ip|target|host|port|url|user|password|domain)>', cmd_lower):
+            return False
+        # Fix #2: Network tools MUST have a target IP — model sometimes
+        # omits it, wasting a turn on "nmap --top-ports 20" with no target
+        net_tools = ('nmap', 'curl', 'dig', 'smbclient', 'ssh', 'nxc',
+                     'gobuster', 'nikto', 'hydra', 'enum4linux')
+        first_word = cmd_lower.split()[0] if cmd_lower.split() else ''
+        if first_word in net_tools:
+            if not re.search(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', command):
+                return False
         # Reject invalid nmap timing (only -T0 through -T5)
-        import re
         timing = re.search(r'-T(\d+)', command)
         if timing and int(timing.group(1)) > 5:
             return False
@@ -690,6 +732,55 @@ class AgentLoop:
         if 'nmap' in cmd_lower and timing and int(timing.group(1)) > 2:
             return False
         return True
+
+    @staticmethod
+    def _dedup_ports(command: str) -> str:
+        """Fix #4: Remove duplicate ports from nmap -p lists."""
+        match = re.search(r'(-p\s*)([\d,]+)', command)
+        if match:
+            prefix = match.group(1)
+            ports_str = match.group(2)
+            # Preserve order, remove duplicates
+            seen = set()
+            unique = []
+            for p in ports_str.split(','):
+                p = p.strip()
+                if p and p not in seen:
+                    seen.add(p)
+                    unique.append(p)
+            if unique:
+                deduped = prefix + ','.join(unique)
+                command = command[:match.start()] + deduped + command[match.end():]
+        return command
+
+    def _reset_context_with_fewshot(self):
+        """Shared context reset with few-shot example.
+
+        Used by: time-based stuck detection, dup-loop reset, no-command reset.
+        Injects a concrete nmap example on a random host so the 2B model
+        copies the pattern instead of repeating its stuck reasoning.
+        """
+        import random as _rand
+        self.context.clear()
+        try:
+            _hosts = [h for h in db.get_hosts()
+                      if len(h.get("ports", [])) > 0]
+            reset_ip = _rand.choice(_hosts)["ip"] if _hosts else "192.168.1.2"
+        except Exception:
+            reset_ip = "192.168.1.2"
+        self.context.append_user(f"Scan {reset_ip}.")
+        self.context.append_assistant(
+            f"REASONING: Probe ports on {reset_ip}.\n"
+            f"COMMAND: nmap -sS -T2 --top-ports 20 {reset_ip}"
+        )
+        self.context.append_user(
+            "[STATUS]: success\n[OUTPUT]:\n22/tcp open ssh\n\n"
+            "Good. Now probe a DIFFERENT host. "
+            "REASONING: [text] COMMAND: [command]"
+        )
+        self.garbage_streak = 0
+        self.recent_commands.clear()
+        self.last_executed_ip = ""
 
     def _should_skip_host(self, ip: str) -> bool:
         """Check if a host is known dead-end and should be skipped."""
@@ -705,8 +796,8 @@ class AgentLoop:
         return False
 
     def _is_duplicate(self, command: str) -> bool:
-        """Check if same command was run in last 3 turns."""
-        return self.recent_commands.count(command) >= 2
+        """Check if exact same command was run in the last 5 turns."""
+        return command in self.recent_commands
 
     @staticmethod
     def _is_garbage(response: str) -> bool:
