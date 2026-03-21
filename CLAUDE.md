@@ -9,11 +9,17 @@ Nightcrawler is an autonomous penetration testing agent running on a OnePlus 8 w
 
 ## CRITICAL: llama-server Rules
 - **NEVER start a second llama-server process** — always `pgrep llama-server` first
-- **NEVER kill llama-server from Kali chroot** — only from Android shell (port 9022)
 - **Context window: 8192 tokens** — do not increase without explicit user approval
-- Dual llama-server processes caused OOM crash on 2026-03-20 (~3GB × 2 = phone reboot)
+- Dual/triple llama-server caused OOM (3GB × 2/3 = phone reboot, observed 2026-03-20 and 2026-03-21)
 - Auto-starts 20 min after boot via Magisk watchdog (30s health check, 20 min crash cooldown)
-- Manual start: `ssh -p 9022 shell@<ip> "bash /data/local/nhsystem/kalifs/root/nightcrawler/scripts/start-llm.sh"`
+- **Watchdog uses PID file** (`/data/local/tmp/var/run/llama-server.pid`) + process count verification — fixed 2026-03-21
+- Every 5h: scheduled restart (20s kill wait, verifies exactly 1 process before/after)
+- **Kali can now SSH to Android**: `ssh -p 9022 shell@127.0.0.1 "command"`
+- Start from Kali: `ssh -p 9022 shell@127.0.0.1 "bash /data/local/nhsystem/kalifs/root/nightcrawler/scripts/start-llm.sh"`
+- Kill from Kali: `ssh -p 9022 shell@127.0.0.1 "pkill -9 -f llama-server"`
+- Health check: `curl -s http://127.0.0.1:8080/health`
+- Watchdog logs: `/data/local/tmp/var/log/llama-watchdog.log`
+- Emergency reboot from Kali: `echo b > /proc/sysrq-trigger`
 
 ## Device Info
 - Phone: OnePlus 8 (kebab), Snapdragon 865, Adreno 650 GPU
@@ -26,6 +32,7 @@ Nightcrawler is an autonomous penetration testing agent running on a OnePlus 8 w
 ## SSH Access
 ```bash
 ssh -p 9022 shell@192.168.1.53   # Android shell (Magisk openssh)
+ssh -p 9022 shell@127.0.0.1      # Android shell (from Kali chroot — key added 2026-03-21)
 ssh root@<tailscale-ip>           # Kali root shell (port 22)
 ```
 
@@ -309,9 +316,9 @@ pattern regardless of which gate is involved.
 ## Boot Sequence (Magisk service.sh)
 1. +10s: Android SSH (9022)
 2. +12s: Mount /vendor in Kali chroot
-3. +14s: Kali SSH (22)
+3. +14s: Kali SSH (22) with retry loop (10 attempts × 30s)
 4. +20min: llama-server watchdog starts (health check every 30s, 20min crash cooldown)
-5. Every 5h: llama-server scheduled restart (KV cache reset, frees ~2GB)
+5. Every 5h: llama-server scheduled restart (PID file enforcement, 20s kill wait, process count verify)
 
 ## After Reboot — Manual Steps
 1. Wait ~23min for llama-server: `curl -s http://127.0.0.1:8080/health`
