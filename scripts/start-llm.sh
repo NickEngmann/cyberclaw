@@ -54,7 +54,9 @@ nohup ${TERMUX_HOME}/llama.cpp/build-fast/bin/llama-server \
     --jinja --reasoning off --log-disable \
     > ${LLAMA_LOG} 2>&1 &
 
-echo "[*] Launched PID $!. Waiting for health..."
+PIDFILE=/data/local/tmp/var/run/llama-server.pid
+echo "$!" > ${PIDFILE}
+echo "[*] Launched PID $! (written to ${PIDFILE}). Waiting for health..."
 for i in $(seq 1 60); do
     sleep 5
     if wget -qO- http://127.0.0.1:${PORT}/health 2>/dev/null | grep -q "ok"; then
