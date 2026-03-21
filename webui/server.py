@@ -851,7 +851,10 @@ def run_webui(port: int = 8888, host: str = None, ssl: bool = True):
     SSL enabled by default using self-signed cert for Tailscale HTTPS.
     """
     if host is None:
-        host = get_tailscale_ip()
+        # Bind to 0.0.0.0 so it's reachable from both Tailscale and
+        # localhost (phone's own browser). The webui is read-only dashboard
+        # + C2 controls that require physical/Tailscale access anyway.
+        host = "0.0.0.0"
 
     ssl_ctx = None
     if ssl:

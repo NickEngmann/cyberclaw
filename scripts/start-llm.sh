@@ -50,7 +50,7 @@ cd ${KERNEL_DIR}
 nohup ${TERMUX_HOME}/llama.cpp/build-fast/bin/llama-server \
     -m ${MODEL} -ngl 99 -c 8192 -t 4 \
     -np 1 \
-    --port ${PORT} --host 0.0.0.0 \
+    --port ${PORT} --host 127.0.0.1 \
     --jinja --reasoning off --log-disable \
     > ${LLAMA_LOG} 2>&1 &
 
