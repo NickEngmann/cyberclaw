@@ -146,8 +146,8 @@ def auto_extract_observations(ip: str, mac: str, command: str,
             pass_match = re.search(r"-p\s+'?([^'\s]+)", command)
             if not pass_match:
                 pass_match = re.search(r'-p\s+(\S+)', command)
-            if user_match and pass_match:
-                user = user_match.group(1)
+            if pass_match:
+                user = user_match.group(1) if user_match else ""
                 passwd = pass_match.group(1)
                 # Truncate wordlist paths
                 if '/' in passwd:
