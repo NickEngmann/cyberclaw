@@ -174,10 +174,12 @@ async def main():
         # Evaluate existing findings to determine correct starting phase
         findings = loop.mission_log.get_findings_summary()
         hosts = findings.get("live_hosts", 0)
+        ports = findings.get("open_ports", 0)
         creds = findings.get("credentials", 0)
-        if creds > 0 or findings.get("vulnerabilities", 0) > 0:
+        vulns = findings.get("vulnerabilities", 0)
+        if creds > 0 or vulns > 0 or (hosts >= 10 and ports >= 15):
             loop.planner.current_phase = Phase.EXPLOIT
-            print(f"  {C.GREEN}[INIT]{C.RESET} Resuming at EXPLOIT ({creds} creds, {hosts} hosts)")
+            print(f"  {C.GREEN}[INIT]{C.RESET} Resuming at EXPLOIT ({hosts} hosts, {ports} ports, {creds} creds)")
         elif hosts >= 3:
             loop.planner.current_phase = Phase.ENUMERATE
             print(f"  {C.GREEN}[INIT]{C.RESET} Resuming at ENUMERATE ({hosts} hosts)")

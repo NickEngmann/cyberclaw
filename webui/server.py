@@ -53,13 +53,32 @@ _state_lock = threading.Lock()
 
 
 def update_state(updates: dict):
-    """Called by the agent loop to push state updates."""
+    """Called by the agent loop to push state updates.
+
+    Also persists key fields to SQLite so the separate webui daemon
+    process can read them (in-memory state is per-process).
+    """
     with _state_lock:
         for k, v in updates.items():
             if k in _state and isinstance(_state[k], dict) and isinstance(v, dict):
                 _state[k].update(v)
             else:
                 _state[k] = v
+    # Persist to shared SQLite for cross-process visibility
+    try:
+        from agent import db
+        db.set_state("agent_ui_state", {
+            "phase": updates.get("phase", ""),
+            "mode": updates.get("mode", ""),
+            "uptime": updates.get("uptime", ""),
+            "commands_total": updates.get("commands_total", 0),
+            "commands_blocked": updates.get("commands_blocked", 0),
+            "errors": updates.get("errors", 0),
+            "iteration": updates.get("iteration", 0),
+            "thor_online": updates.get("thor_online", False),
+        })
+    except Exception:
+        pass
 
 
 def push_feed(event_type: str, content: str):
@@ -134,6 +153,18 @@ def api_state():
     # Build state from disk + in-memory
     with _state_lock:
         state = dict(_state)
+
+    # Read agent's persisted UI state from SQLite (cross-process)
+    try:
+        from agent import db
+        ui_state = db.get_state("agent_ui_state", {})
+        if ui_state:
+            for k in ("phase", "mode", "uptime", "commands_total",
+                       "commands_blocked", "errors", "iteration", "thor_online"):
+                if ui_state.get(k):
+                    state[k] = ui_state[k]
+    except Exception:
+        pass
 
     # Override with disk data (more reliable than in-memory when separate processes)
     state["findings"] = {
