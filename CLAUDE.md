@@ -29,10 +29,32 @@ Nightcrawler is an autonomous penetration testing agent running on a OnePlus 8 w
 - Chroot: Kali Linux at /data/local/nhsystem/kalifs
 - Termux: installed (used for OpenCL GPU builds)
 
+## Two Worlds: Kali Chroot vs Android
+The phone has two separate execution environments sharing the same kernel + network:
+
+| | Kali Chroot | Android |
+|---|---|---|
+| libc | glibc | bionic |
+| Home | `/root/` | `/data/data/com.termux/files/home/` |
+| SSH port | 22 | 9022 |
+| Project path | `/root/nightcrawler/` | `/data/local/nhsystem/kalifs/root/nightcrawler/` |
+| GPU binaries | **CANNOT run** (bionic-linked) | llama-server, OpenCL |
+
+**Key rules:**
+- Binaries from one world can't run in the other (glibc vs bionic)
+- **Only way to execute Android-side from Kali**: `ssh -p 9022 shell@127.0.0.1 "command"`
+- `nsenter` does NOT work — SSH is the only bridge
+- `/vendor` must be mounted in chroot for OpenCL libs (`ls /vendor/lib64/libOpenCL.so`)
+- `/data` is shared — Kali can see Termux files at `/data/data/com.termux/files/home/`
+- Port 9022 dies first under OOM (Android sshd is heavier). Port 22 (Kali) usually survives
+- If 9022 is down but 22 is up: can kill processes from Kali but can't start Android-side processes
+- Emergency reboot when Android SSH is dead: `echo b > /proc/sysrq-trigger`
+- RAM budget: llama-server ~3.2GB + Android ~3-4GB = ~7GB used, leaving ~4-5GB for agent + tools
+
 ## SSH Access
 ```bash
-ssh -p 9022 shell@192.168.1.53   # Android shell (Magisk openssh)
-ssh -p 9022 shell@127.0.0.1      # Android shell (from Kali chroot — key added 2026-03-21)
+ssh -p 9022 shell@127.0.0.1      # Android shell (from Kali chroot)
+ssh -p 9022 shell@192.168.1.53   # Android shell (from external)
 ssh root@<tailscale-ip>           # Kali root shell (port 22)
 ```
 
