@@ -801,47 +801,79 @@ class AgentLoop:
 
     @staticmethod
     def _exploit_hint(ip: str, ports: set) -> str:
-        """Generate exploit-phase hint: credential testing matched to ports."""
+        """Generate exploit-phase hint: smart, varied attacks matched to ports.
+
+        Includes: default creds, searchsploit, nmap vuln scripts, impacket,
+        web probing, directory busting. Randomized to prevent repetition.
+        """
         import random as _r
-        if 23 in ports:
-            return _r.choice([
-                f"Try: nxc telnet {ip} -u admin -p admin (telnet default creds). ",
-                f"Try: nxc telnet {ip} -u root -p root (telnet default creds). ",
-            ])
+        hints = []
+
+        # Version-based CVE lookup (always useful)
         if 22 in ports:
-            return _r.choice([
+            hints.extend([
+                f"Try: searchsploit openssh 8.2 (check for CVEs). ",
+                f"Try: nmap -T2 --script=vulners -p 22 {ip} (CVE scan SSH). ",
                 f"Try: nxc ssh {ip} -u pi -p raspberry (Pi default). ",
                 f"Try: nxc ssh {ip} -u root -p root (SSH default). ",
                 f"Try: nxc ssh {ip} -u admin -p admin (SSH default). ",
                 f"Try: sshpass -p 'raspberry' ssh -o StrictHostKeyChecking=no pi@{ip}. ",
-                f"Try: nxc ssh {ip} -u root -p /usr/share/wordlists/nmap.lst (small wordlist). ",
+                f"Try: nxc ssh {ip} -u root -p /usr/share/wordlists/nmap.lst (wordlist). ",
+            ])
+        if 23 in ports:
+            hints.extend([
+                f"Try: nxc telnet {ip} -u admin -p admin (telnet default). ",
+                f"Try: nxc telnet {ip} -u root -p root (telnet default). ",
             ])
         if ports & {445, 139}:
-            return _r.choice([
+            hints.extend([
+                f"Try: nmap -T2 --script=smb-vuln* -p 445 {ip} (SMB vuln scan). ",
                 f"Try: nxc smb {ip} -u '' -p '' --shares (null session). ",
-                f"Try: enum4linux -a {ip} (SMB enumeration). ",
-                f"Try: nxc smb {ip} -u guest -p '' --shares (guest access). ",
+                f"Try: nxc smb {ip} -u guest -p '' --shares --rid-brute (guest+RID). ",
+                f"Try: enum4linux -a {ip} (full SMB enum). ",
+                f"Try: impacket-samrdump {ip} (SAM user dump). ",
+                f"Try: impacket-rpcdump {ip} (RPC endpoints). ",
+                f"Try: searchsploit samba 4.17 (check Samba CVEs). ",
             ])
-        if ports & {80, 8080, 8888}:
-            p = min(ports & {80, 8080, 8888})
+        if ports & {80, 443, 8080, 8888}:
+            p = min(ports & {80, 443, 8080, 8888})
             pp = "" if p == 80 else f":{p}"
-            return _r.choice([
+            hints.extend([
+                f"Try: curl -s http://{ip}{pp}/robots.txt (hidden paths). ",
+                f"Try: curl -s http://{ip}{pp}/.env (leaked config). ",
                 f"Try: curl -s http://{ip}{pp}/admin/ -u admin:admin (admin panel). ",
+                f"Try: curl -s http://{ip}{pp}/server-status (Apache status). ",
                 f"Try: gobuster dir -u http://{ip}{pp} -w /usr/share/wordlists/dirb/common.txt -q -t 5. ",
+                f"Try: dirb http://{ip}{pp} /usr/share/wordlists/dirb/small.txt -S (dir brute). ",
+                f"Try: nmap -T2 --script=http-vuln* -p {p} {ip} (HTTP vuln scan). ",
             ])
         if 5900 in ports:
-            return f"Try: nxc vnc {ip} -p password (VNC default). "
+            hints.extend([
+                f"Try: nxc vnc {ip} -p password (VNC default). ",
+                f"Try: nmap -T2 --script=vnc-info -p 5900 {ip} (VNC info). ",
+            ])
         if 53 in ports:
-            return f"Try: dig axfr @{ip} (DNS zone transfer). "
+            hints.extend([
+                f"Try: dig axfr @{ip} (DNS zone transfer). ",
+                f"Try: searchsploit dnsmasq 2.9 (check dnsmasq CVEs). ",
+            ])
         if 21 in ports:
-            return f"Try: nxc ftp {ip} -u anonymous -p anonymous (FTP anonymous). "
+            hints.extend([
+                f"Try: nxc ftp {ip} -u anonymous -p anonymous (FTP anon). ",
+                f"Try: nmap -T2 --script=ftp-anon -p 21 {ip} (FTP anon check). ",
+            ])
         if ports & {3306, 5432, 6379}:
             if 6379 in ports:
-                return f"Try: redis-cli -h {ip} INFO (Redis unauthenticated). "
+                hints.append(f"Try: redis-cli -h {ip} INFO (Redis unauthenticated). ")
             if 3306 in ports:
-                return f"Try: nxc mysql {ip} -u root -p root (MySQL default). "
-            return f"Try: nxc ssh {ip} -u root -p root (default creds). "
-        return f"Try: nxc ssh {ip} -u root -p root (default creds). "
+                hints.append(f"Try: nxc mysql {ip} -u root -p root (MySQL default). ")
+
+        if not hints:
+            hints = [
+                f"Try: nmap -T2 --script=vulners -p {min(ports)} {ip} (CVE scan). ",
+                f"Try: searchsploit [service version from {ip}] (find exploits). ",
+            ]
+        return _r.choice(hints)
 
     def _reset_context_with_fewshot(self):
         """Shared context reset with few-shot example.
