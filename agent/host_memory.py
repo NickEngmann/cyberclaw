@@ -169,6 +169,29 @@ def auto_extract_observations(ip: str, mac: str, command: str,
             except Exception:
                 pass
 
+    # Record recon tool attempts so agent doesn't repeat them
+    if "searchsploit" in command:
+        parts = command.split("searchsploit", 1)[1].strip()
+        if parts:
+            add_observation(mac, f"TRIED searchsploit {parts[:40]}",
+                            source="agent", ip=ip)
+
+    if "dig" in command and "axfr" in command:
+        add_observation(mac, "TRIED axfr zone transfer",
+                        source="agent", ip=ip)
+
+    if "enum4linux" in command:
+        add_observation(mac, "TRIED enum4linux", source="agent", ip=ip)
+
+    if "nikto" in command:
+        add_observation(mac, "TRIED nikto web scan", source="agent", ip=ip)
+
+    if "impacket-samrdump" in command:
+        add_observation(mac, "TRIED impacket-samrdump", source="agent", ip=ip)
+
+    if "impacket-rpcdump" in command:
+        add_observation(mac, "TRIED impacket-rpcdump", source="agent", ip=ip)
+
     observations = []
 
     # HTTP server identification
@@ -411,6 +434,15 @@ def get_failed_attacks(mac: str) -> list:
         return []
     return [o["text"] for o in mem.get("observations", [])
             if o["text"].startswith("FAILED ")]
+
+
+def get_tried_actions(mac: str) -> list:
+    """Get list of already-tried tool strings for hint dedup."""
+    mem = get_memory(mac)
+    if not mem:
+        return []
+    return [o["text"] for o in mem.get("observations", [])
+            if o["text"].startswith("TRIED ")]
 
 
 def get_access_findings(mac: str) -> list:

@@ -13,6 +13,7 @@ from agent.mission_log import MissionLog
 from agent import db
 from agent import host_memory
 from agent import training_capture
+from agent import cve_db
 
 try:
     from agent.ui_bridge import update_state, push_feed
@@ -46,6 +47,8 @@ class AgentLoop:
         self.recent_commands = []  # last N commands for dup detection
         self.last_executed_ip = ""  # for same-host enforcement
         self.last_command_time = time.time()  # for time-based stuck detection
+        self.multi_turn_remaining = 0  # allow consecutive cmds on same host
+        self.multi_turn_ip = ""
         self.iteration = 0
         self.total_commands = 0
         self.total_blocked = 0
@@ -358,20 +361,24 @@ class AgentLoop:
                         )
                         continue
 
-                    # Fix #1: Same-host enforcement — one action per host
-                    # per turn. Reject commands targeting the same IP as
-                    # the last executed command (stealth: spread activity).
+                    # Same-host enforcement — one action per host per turn,
+                    # UNLESS multi-turn exploitation is active on this host.
                     if self.last_executed_ip and target_ips:
                         if target_ips[0] == self.last_executed_ip:
-                            self.garbage_streak += 1
-                            push_feed("warning",
-                                      f"Same host rejected: {target_ips[0]}")
-                            self.context.append_user(
-                                f"You just scanned {target_ips[0]}. "
-                                "ROTATE to a DIFFERENT host for stealth. "
-                                "REASONING: [text] COMMAND: [different host]"
-                            )
-                            continue
+                            if (self.multi_turn_remaining > 0 and
+                                    target_ips[0] == self.multi_turn_ip):
+                                # Multi-turn: allow consecutive on same host
+                                self.multi_turn_remaining -= 1
+                            else:
+                                self.garbage_streak += 1
+                                push_feed("warning",
+                                          f"Same host rejected: {target_ips[0]}")
+                                self.context.append_user(
+                                    f"You just scanned {target_ips[0]}. "
+                                    "ROTATE to a DIFFERENT host for stealth. "
+                                    "REASONING: [text] COMMAND: [different host]"
+                                )
+                                continue
 
                     # Validate command before execution
                     if not self._is_valid_command(command):
@@ -486,11 +493,21 @@ class AgentLoop:
                             self.llm.notify_wifi_connected()
                             self.mission_log.set_finding("wifi_connected", True)
 
-                    # Reset context after each command — host memory provides
-                    # persistent knowledge, so we don't need to carry context
-                    # about previous hosts. Fresh context = better rotation.
-                    self.context.clear()
                     output_summary = result.get("output", "")[:500]
+
+                    # Multi-turn: keep context if exploiting a high-priority host
+                    if (self.multi_turn_remaining > 0 and
+                            target_ips and target_ips[0] == self.multi_turn_ip):
+                        # Stay on this host — don't clear context
+                        self.context.append_user(
+                            f"[RESULT]: {output_summary}\n\n"
+                            "Good. Go DEEPER on this same host. "
+                            "REASONING: [text] COMMAND: [next step]"
+                        )
+                        continue
+
+                    # Normal: reset context, suggest random host
+                    self.context.clear()
 
                     # Suggest a random host — weighted by attack surface
                     import random as _random
@@ -588,8 +605,10 @@ class AgentLoop:
                                             break
                                     _pri = host_memory.get_host_priority(_mac) if _mac else "medium"
                                     if _pri == "high" and _mac:
-                                        # High-priority: go deeper into confirmed access
+                                        # High-priority: go deeper + enable multi-turn
                                         hint = self._depth_hint(suggested, _mac, set(host_ports))
+                                        self.multi_turn_remaining = 2
+                                        self.multi_turn_ip = suggested
                                     elif _rh.random() < 0.5:
                                         hint = self._exploit_hint(suggested, set(host_ports))
                                     else:
@@ -786,7 +805,9 @@ class AgentLoop:
         # Fix #2: Network tools MUST have a target IP — model sometimes
         # omits it, wasting a turn on "nmap --top-ports 20" with no target
         net_tools = ('nmap', 'curl', 'dig', 'smbclient', 'ssh', 'nxc',
-                     'gobuster', 'nikto', 'hydra', 'enum4linux')
+                     'gobuster', 'nikto', 'hydra', 'enum4linux', 'sqlmap',
+                     'dirb', 'impacket-samrdump', 'impacket-rpcdump',
+                     'impacket-secretsdump', 'impacket-wmiexec')
         first_word = cmd_lower.split()[0] if cmd_lower.split() else ''
         if first_word in net_tools:
             if not re.search(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', command):
@@ -830,11 +851,17 @@ class AgentLoop:
         import random as _r
         findings = host_memory.get_access_findings(mac)
         failed = host_memory.get_failed_attacks(mac)
-        failed_set = set(failed)  # for quick lookup
+        tried = host_memory.get_tried_actions(mac)
+        all_obs = [o["text"] for o in host_memory.get_memory(mac).get("observations", [])]
 
         hints = []
 
-        # SMB depth: if shares are known, read them instead of re-listing
+        # CVE DB lookup — version-specific exploits (highest priority)
+        cve_hint = cve_db.get_exploit_hint(all_obs, ip)
+        if cve_hint:
+            hints.append(cve_hint)
+
+        # SMB depth: if shares are known, READ them (not re-list!)
         if any("shares accessible" in f for f in findings):
             share_match = None
             for f in findings:
@@ -856,22 +883,23 @@ class AgentLoop:
                 f"Try: enum4linux -a {ip} (full SMB enumeration). ",
             ])
 
-        # Pi-hole depth: try admin panel paths
+        # Pi-hole depth: actual login mechanism (POST, not basic auth)
         if any("Pi-hole" in f or "pi-hole" in f for f in findings):
             hints.extend([
-                f"Try: curl -s http://{ip}/admin/ (Pi-hole admin panel). ",
-                f"Try: curl -s http://{ip}/admin/api.php (Pi-hole API). ",
-                f"Try: curl -s http://{ip}/admin/scripts/pi-hole/php/auth.php (auth check). ",
+                f"Try: curl -s -X POST http://{ip}/admin/index.php -d 'pw=admin' (Pi-hole login). ",
+                f"Try: curl -s -X POST http://{ip}/admin/index.php -d 'pw=raspberry' (Pi-hole login). ",
+                f"Try: curl -s http://{ip}/admin/api.php?status (Pi-hole API). ",
                 f"Try: gobuster dir -u http://{ip} -w /usr/share/wordlists/dirb/common.txt -q -t 5. ",
             ])
 
-        # HTTP depth: if server responds, probe deeper
+        # HTTP depth: if server responds, probe deeper + web exploits
         if any("HTTP server" in f or "HTTP 403" in f for f in findings):
             hints.extend([
                 f"Try: curl -s http://{ip}/robots.txt (hidden paths). ",
                 f"Try: curl -s http://{ip}/.env (leaked config). ",
                 f"Try: curl -s http://{ip}/server-status (Apache status). ",
                 f"Try: dirb http://{ip} /usr/share/wordlists/dirb/small.txt -S (dir scan). ",
+                f"Try: nikto -h http://{ip} -Tuning 1 -maxtime 60s (web vuln scan). ",
             ])
 
         # VNC depth: if VNC is open, try different approaches
@@ -898,8 +926,28 @@ class AgentLoop:
                 f"Try: dig @{ip} any (all records). ",
             ])
 
-        # Filter out hints for attacks we already failed
-        # (e.g., if we failed SSH admin:admin, don't suggest it again)
+        # Impacket on any SMB host (even without specific findings)
+        if ports & {445, 139}:
+            hints.extend([
+                f"Try: impacket-samrdump {ip} (enumerate users via SAM). ",
+                f"Try: impacket-rpcdump {ip} (RPC endpoints). ",
+            ])
+
+        # Filter out hints for tools we already tried on this host
+        if tried and hints:
+            filtered = []
+            for h in hints:
+                skip = False
+                for t in tried:
+                    action = t.replace("TRIED ", "").lower()
+                    if action in h.lower():
+                        skip = True
+                        break
+                if not skip:
+                    filtered.append(h)
+            if filtered:
+                hints = filtered
+
         if hints:
             return _r.choice(hints)
 
@@ -1035,6 +1083,8 @@ class AgentLoop:
         self.garbage_streak = 0
         self.recent_commands.clear()
         self.last_executed_ip = ""
+        self.multi_turn_remaining = 0
+        self.multi_turn_ip = ""
 
     def _should_skip_host(self, ip: str) -> bool:
         """Check if a host is known dead-end and should be skipped."""
