@@ -53,6 +53,10 @@ class AgentLoop:
         self.multi_turn_ip = ""
         self.active_playbook = None  # current playbook steps
         self.playbook_step = 0
+        self.playbook_queue = []  # direct-execute queue (bypasses LLM)
+        self.playbook_queue_ip = ""
+        self.playbook_queue_mac = ""
+        self.playbook_queue_id = ""
         self.iteration = 0
         self.total_commands = 0
         self.total_blocked = 0
@@ -240,6 +244,63 @@ class AgentLoop:
                     self.mission_log.record(manual_cmd, result, "[MANUAL]")
                     self.ui.render_result(result)
                     self.total_commands += 1
+                    continue
+
+                # Direct playbook execution — bypasses LLM entirely
+                if self.playbook_queue:
+                    pb_cmd = self.playbook_queue.pop(0)
+                    self.ui.render_command(f"[PLAYBOOK] {pb_cmd}")
+                    push_feed("command", f"[PLAYBOOK] {pb_cmd}")
+                    result = await self._execute(pb_cmd)
+                    self.mission_log.record(pb_cmd, result, "[PLAYBOOK]")
+                    self.ui.render_result(result)
+                    self.total_commands += 1
+                    self.last_command_time = time.time()
+                    self.last_executed_ip = self.playbook_queue_ip
+
+                    # Process output for findings
+                    try:
+                        parsed = output_parser.parse_output(
+                            self.playbook_queue_ip,
+                            self.playbook_queue_mac,
+                            pb_cmd,
+                            result.get("output", ""),
+                            result.get("status", ""))
+                    except Exception:
+                        parsed = {}
+
+                    # Auto-extract observations
+                    try:
+                        if self.playbook_queue_mac:
+                            host_memory.auto_extract_observations(
+                                self.playbook_queue_ip,
+                                self.playbook_queue_mac,
+                                pb_cmd,
+                                result.get("output", ""),
+                                result.get("status", ""))
+                    except Exception:
+                        pass
+
+                    # Log result
+                    status = result.get("status", "unknown")
+                    output = result.get("output", "")
+                    if status == "success" and output.strip():
+                        push_feed("result", output[:500])
+                    elif status == "error":
+                        push_feed("error", result.get("error", "")[:200])
+
+                    # When queue empty, mark playbook done
+                    if not self.playbook_queue:
+                        if self.playbook_queue_mac and self.playbook_queue_id:
+                            host_memory.mark_playbook_done(
+                                self.playbook_queue_mac,
+                                self.playbook_queue_id,
+                                ip=self.playbook_queue_ip)
+                            push_feed("phase",
+                                f"Playbook {self.playbook_queue_id} done on {self.playbook_queue_ip}")
+                        self.playbook_queue_id = ""
+                        self.playbook_queue_ip = ""
+                        self.playbook_queue_mac = ""
                     continue
 
                 # Fix #3: Time-based stuck detection — if no command
@@ -442,7 +503,7 @@ class AgentLoop:
                         command = self._dedup_ports(command)
 
                     self.ui.render_command(command)
-                    push_feed("command", command)
+                    push_feed("command", f"[LLM] {command}")
                     result = await self._execute(command)
                     # tool_result is appended as a user message,
                     # keeping the alternating user/assistant pattern
@@ -676,14 +737,18 @@ class AgentLoop:
                                         # High-priority: check for playbook first
                                         pb = self._get_playbook(suggested, _mac, set(host_ports))
                                         if pb and pb["steps"]:
-                                            hint = f"Try: {pb['steps'][0]} ({pb['desc']}). "
-                                            self.active_playbook = pb
-                                            self.playbook_step = 0
-                                            self.multi_turn_remaining = min(len(pb["steps"]), 3)
+                                            # DIRECT EXECUTION: push all steps into queue
+                                            # bypasses LLM — commands run exactly as specified
+                                            self.playbook_queue = list(pb["steps"])
+                                            self.playbook_queue_ip = suggested
+                                            self.playbook_queue_mac = _mac
+                                            self.playbook_queue_id = pb["id"]
+                                            hint = f"Playbook {pb['id']} queued ({len(pb['steps'])} steps). "
+                                            push_feed("phase",
+                                                f"Playbook {pb['id']} starting on {suggested} ({len(pb['steps'])} steps)")
                                         else:
                                             hint = self._depth_hint(suggested, _mac, set(host_ports))
-                                            self.multi_turn_remaining = 2
-                                        self.multi_turn_ip = suggested
+                                        # No multi-turn needed — playbook queue handles it
                                     elif _rh.random() < 0.5:
                                         hint = self._exploit_hint(suggested, set(host_ports))
                                     else:
@@ -1243,21 +1308,11 @@ class AgentLoop:
         self.garbage_streak = 0
         self.recent_commands.clear()
         self.last_executed_ip = ""
-        # Mark active playbook as done before clearing (reset = playbook interrupted)
-        if self.active_playbook and self.multi_turn_ip:
-            _pb_id = self.active_playbook.get("id", "")
-            _rst_mac = ""
-            for _h in db.get_hosts():
-                if _h["ip"] == self.multi_turn_ip:
-                    _rst_mac = _h.get("mac", "")
-                    break
-            if _rst_mac and _pb_id:
-                host_memory.mark_playbook_done(
-                    _rst_mac, _pb_id, ip=self.multi_turn_ip)
         self.multi_turn_remaining = 0
         self.multi_turn_ip = ""
         self.active_playbook = None
         self.playbook_step = 0
+        # Don't clear playbook_queue on reset — let queued commands finish
 
     def _should_skip_host(self, ip: str) -> bool:
         """Check if a host is known dead-end and should be skipped."""
