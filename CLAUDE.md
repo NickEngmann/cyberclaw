@@ -6,6 +6,8 @@ Nightcrawler is an autonomous penetration testing agent running on a OnePlus 8 w
 - GitHub: github.com/NickEngmann/nightcrawler
 - Install: `/opt/nightcrawler/` (production), `/root/nightcrawler/` (dev)
 - Architecture doc: `docs/ARCHITECTURE.md`
+- Feature reference: `docs/FEATURES.md`
+- Thor deferred features: `docs/THOR_DEFERRED.md`
 
 ## CRITICAL: llama-server Rules
 - **NEVER start a second llama-server process** — always `pgrep llama-server` first
@@ -68,6 +70,9 @@ ssh root@<tailscale-ip>           # Kali root shell (port 22)
 | 8800 | scope-proxy | Scope enforcement + rate limit + audit |
 | 8888 | web UI | Dashboard (Tailscale IP only, HTTPS) |
 
+**Security**: llama-server, kali-mcp, scope-proxy bound to 127.0.0.1 only.
+WebUI on 0.0.0.0 but stealth-filtered (rejects target network, spoofs nginx).
+
 ## Nightcrawler Stack
 ```
 Agent (main.py) → LLM (llama.cpp :8080) → REASONING + COMMAND
@@ -93,6 +98,11 @@ bash scripts/run-36h.sh
 # Dry-run (mock kali server, no real commands)
 NC_DRY_RUN=1 python3 main.py
 ```
+
+**Note**: `main.py` auto-starts the webui daemon if not running. The agent and
+webui are separate processes — the agent writes state to SQLite via
+`agent/ui_bridge.py`, the webui reads it. This prevents the webui from blocking
+during long LLM/nmap calls.
 
 ## GPU Inference (OpenCL)
 llama.cpp compiled in Termux with Adreno-optimized OpenCL kernels. Runs as root on Android side (not in chroot). From Kali chroot, agent reaches it at http://127.0.0.1:8080 (shared network namespace).
@@ -154,6 +164,10 @@ After each command, a random live host is suggested for the next turn:
 - 70% chance: host with known open ports (productive)
 - 30% chance: any random host (discovery)
 - Excludes: dead-end hosts, last 3 probed IPs, excluded hosts
+
+**Exception: Multi-turn mode** — high-priority hosts with confirmed access
+get 2-3 consecutive commands without context reset. Playbook steps are fed
+as specific next-step commands. Context is preserved between turns.
 
 ## Auto-Blacklist Self
 On startup, the agent auto-blacklists all `excluded_hosts` from config.yaml
@@ -291,6 +305,17 @@ Available tools verified on Kali NetHunter:
 - Context hints randomly suggest exploit OR enumerate tools each turn
 - Prompt is hot-reloadable: edit `prompts/phase3_exploit.md`
 
+### Exploit Pipeline v4 (added 2026-03-21)
+- **CVE DB**: 24,956 entries in `data/cve_exploits.json` — replaces searchsploit
+- **Playbooks**: 11 multi-step attack chains in `data/playbooks.json` — one-and-done or repeatable
+- **Output parser**: `agent/output_parser.py` — extracts CVEs, files, hostnames, creds from output
+- **Attack planner**: `agent/attack_planner.py` — strategic directives every ~50 commands
+- **Smart targeting**: priority-weighted host selection, failure memory, tried-action dedup
+- **Multi-turn**: 2-3 consecutive commands on high-priority hosts
+- **Exploit chains**: vuln DB tracks the command sequence that found each finding
+- **Report generation**: `/api/report` endpoint + REPORT button in web UI
+- See `docs/FEATURES.md` for full details
+
 ## Cross-Process State (agent ↔ webui)
 The agent and webui daemon are separate processes. State is shared via:
 - **SQLite**: `agent_ui_state` key in state table (phase, mode, uptime, stats)
@@ -362,6 +387,9 @@ pattern regardless of which gate is involved.
 - Daemon: `bash scripts/webui-daemon.sh {start|stop|status|restart}`
 - Features: clickable host cards, port details, scan history, network selector, Thor export
 - Reads from SQLite + JSON files (survives agent crashes)
+- **Stealth**: spoofs nginx headers, rejects 192.168.x connections (returns empty 404)
+- **Report**: REPORT button generates downloadable pentest report with vulns + remediation
+- **Separate process**: agent communicates via SQLite (`agent/ui_bridge.py`), webui reads
 
 ## IMPORTANT: Always Restart Agent After Code Changes
 After modifying agent/loop.py, agent/*.py, or main.py:

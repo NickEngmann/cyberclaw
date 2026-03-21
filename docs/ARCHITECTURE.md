@@ -148,6 +148,29 @@ all hosts, doing one small action per turn, building knowledge gradually.
 
 ---
 
+## Exploit Pipeline
+
+The exploit phase uses a multi-layer intelligence system that compensates
+for the 2B model's inability to chain multi-step attacks:
+
+```
+Host Selected → CVE DB lookup (25k entries) → version-matched exploit command
+            → Playbook check (11 chains) → multi-step attack sequence
+            → Output Parser → structured data → vulnerability DB
+            → Attack Planner (every ~50 cmds) → strategic directive in prompt
+```
+
+**Key components:**
+- `agent/cve_db.py` + `data/cve_exploits.json`: 24,956 CVE→command mappings
+- `data/playbooks.json`: 11 exploit playbooks (one-and-done or repeatable)
+- `agent/output_parser.py`: extracts CVEs, files, hostnames, creds from output
+- `agent/attack_planner.py`: strategic directives injected into system prompt
+- `agent/host_memory.py`: failure tracking, tried-action dedup, playbook completion
+
+See `docs/FEATURES.md` for detailed documentation of each component.
+
+---
+
 ## Directory Structure
 
 ```
@@ -161,7 +184,14 @@ all hosts, doing one small action per turn, building knowledge gradually.
 │   ├── llm_client.py                # llama.cpp / Thor API client w/ fallback
 │   ├── context.py                   # Context window manager + summarizer
 │   ├── watchdog.py                  # Mission timer + runtime enforcement
-│   └── mission_log.py               # Structured findings + timeline
+│   ├── mission_log.py               # Structured findings + timeline
+│   ├── host_memory.py               # Per-host persistent observations
+│   ├── training_capture.py          # Finetuning data capture (ChatML)
+│   ├── ui_bridge.py                 # Agent→WebUI state via SQLite
+│   ├── cve_db.py                    # Local CVE→command database (25k entries)
+│   ├── output_parser.py             # Structured intelligence from tool output
+│   ├── attack_planner.py            # Network-wide strategic directives
+│   └── db.py                        # SQLite backend (hosts, vulns, creds, state)
 ├── proxy/
 │   ├── scope.py                     # IP/port/host validation
 │   ├── rate_limiter.py              # Command rate limiting + jitter
@@ -172,9 +202,12 @@ all hosts, doing one small action per turn, building knowledge gradually.
 │   ├── matrix.py                    # Matrix rain + glitch effects
 │   ├── panels.py                    # Status panels
 │   └── colors.py                    # ANSI color definitions
+├── data/
+│   ├── cve_exploits.json            # 24,956 CVE→exploit mappings (5.1MB)
+│   └── playbooks.json               # 11 multi-step exploit playbooks
 ├── webui/
-│   ├── server.py                    # Flask web dashboard (Tailscale only)
-│   └── templates/index.html         # Hacker terminal aesthetic UI
+│   ├── server.py                    # Flask web dashboard (stealth-filtered)
+│   └── templates/index.html         # Hacker terminal UI + report generation
 ├── simulation/
 │   ├── mock_kali_server.py          # Fake kali-server-mcp for dry-run
 │   ├── scenarios/basic_wpa2.json    # Test scenarios
