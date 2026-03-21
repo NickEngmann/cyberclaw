@@ -14,6 +14,8 @@ from agent import db
 from agent import host_memory
 from agent import training_capture
 from agent import cve_db
+from agent import output_parser
+from agent import attack_planner
 
 try:
     from agent.ui_bridge import update_state, push_feed
@@ -49,6 +51,8 @@ class AgentLoop:
         self.last_command_time = time.time()  # for time-based stuck detection
         self.multi_turn_remaining = 0  # allow consecutive cmds on same host
         self.multi_turn_ip = ""
+        self.active_playbook = None  # current playbook steps
+        self.playbook_step = 0
         self.iteration = 0
         self.total_commands = 0
         self.total_blocked = 0
@@ -305,6 +309,12 @@ class AgentLoop:
                     if net_ctx:
                         system += f"\n{net_ctx}"
 
+                # Attack planner — strategic directive (every ~50 commands)
+                if self.total_commands % 50 < 3:
+                    plan = attack_planner.generate_plan(max_tokens=150)
+                    if plan:
+                        system += f"\n{plan}"
+
                 messages = self.context.get_messages()
 
                 # Call LLM
@@ -486,6 +496,26 @@ class AgentLoop:
                     except Exception:
                         pass
 
+                    # Output parser — extract structured intelligence
+                    try:
+                        if target_ips:
+                            _parse_mac = ""
+                            for _h in db.get_hosts():
+                                if _h["ip"] == target_ips[0]:
+                                    _parse_mac = _h.get("mac", "")
+                                    break
+                            parsed = output_parser.parse_output(
+                                target_ips[0], _parse_mac, command,
+                                result.get("output", ""),
+                                result.get("status", ""))
+                            # Use parser's suggested next command for multi-turn
+                            if (parsed.get("next_command") and
+                                    self.multi_turn_remaining > 0):
+                                # Override the hint with parser's suggestion
+                                pass  # hint will be set in context below
+                    except Exception:
+                        parsed = {}
+
                     # WiFi connect detection
                     if ("wpa_supplicant" in command or
                             "dhclient" in command):
@@ -498,10 +528,20 @@ class AgentLoop:
                     # Multi-turn: keep context if exploiting a high-priority host
                     if (self.multi_turn_remaining > 0 and
                             target_ips and target_ips[0] == self.multi_turn_ip):
-                        # Stay on this host — don't clear context
+                        # Stay on this host — use playbook step if available
+                        next_hint = "Go DEEPER on this same host."
+                        if (self.active_playbook and
+                                self.playbook_step < len(self.active_playbook.get("steps", []))):
+                            self.playbook_step += 1
+                            if self.playbook_step < len(self.active_playbook["steps"]):
+                                next_cmd = self.active_playbook["steps"][self.playbook_step]
+                                next_hint = f"Next step: {next_cmd}"
+                        elif parsed and parsed.get("next_command"):
+                            next_hint = f"Next step: {parsed['next_command']}"
+
                         self.context.append_user(
                             f"[RESULT]: {output_summary}\n\n"
-                            "Good. Go DEEPER on this same host. "
+                            f"{next_hint} "
                             "REASONING: [text] COMMAND: [next step]"
                         )
                         continue
@@ -605,9 +645,16 @@ class AgentLoop:
                                             break
                                     _pri = host_memory.get_host_priority(_mac) if _mac else "medium"
                                     if _pri == "high" and _mac:
-                                        # High-priority: go deeper + enable multi-turn
-                                        hint = self._depth_hint(suggested, _mac, set(host_ports))
-                                        self.multi_turn_remaining = 2
+                                        # High-priority: check for playbook first
+                                        pb = self._get_playbook(suggested, _mac, set(host_ports))
+                                        if pb and pb["steps"]:
+                                            hint = f"Try: {pb['steps'][0]} ({pb['desc']}). "
+                                            self.active_playbook = pb
+                                            self.playbook_step = 0
+                                            self.multi_turn_remaining = min(len(pb["steps"]), 3)
+                                        else:
+                                            hint = self._depth_hint(suggested, _mac, set(host_ports))
+                                            self.multi_turn_remaining = 2
                                         self.multi_turn_ip = suggested
                                     elif _rh.random() < 0.5:
                                         hint = self._exploit_hint(suggested, set(host_ports))
@@ -1055,6 +1102,48 @@ class AgentLoop:
             ]
         return _r.choice(hints)
 
+    def _get_playbook(self, ip: str, mac: str, ports: set) -> dict:
+        """Find a matching playbook for this host based on observations."""
+        import json, os
+        try:
+            pb_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "data", "playbooks.json")
+            with open(pb_path) as f:
+                playbooks = json.load(f).get("playbooks", [])
+        except Exception:
+            return None
+
+        obs = [o["text"] for o in
+               host_memory.get_memory(mac).get("observations", [])]
+        tried = host_memory.get_tried_actions(mac)
+        obs_text = " ".join(obs).lower()
+
+        for pb in playbooks:
+            trigger = pb.get("trigger_obs", "").lower()
+            trigger_ports = set(pb.get("trigger_ports", []))
+
+            if trigger in obs_text and (not trigger_ports or
+                                         trigger_ports & ports):
+                # Filter out already-tried steps
+                steps = []
+                for step in pb.get("steps", []):
+                    step_cmd = step.format(ip=ip, share="share")
+                    # Check if we already tried this tool
+                    skip = False
+                    for t in tried:
+                        action = t.replace("TRIED ", "").lower()
+                        if action in step_cmd.lower():
+                            skip = True
+                            break
+                    if not skip:
+                        steps.append(step_cmd)
+
+                if steps:
+                    return {"id": pb["id"], "steps": steps,
+                            "desc": pb.get("desc", "")}
+        return None
+
     def _reset_context_with_fewshot(self):
         """Shared context reset with few-shot example.
 
@@ -1085,6 +1174,8 @@ class AgentLoop:
         self.last_executed_ip = ""
         self.multi_turn_remaining = 0
         self.multi_turn_ip = ""
+        self.active_playbook = None
+        self.playbook_step = 0
 
     def _should_skip_host(self, ip: str) -> bool:
         """Check if a host is known dead-end and should be skipped."""
