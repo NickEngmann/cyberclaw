@@ -41,11 +41,16 @@ Cross-referenced from `CLAUDE.md` (operational guide) and `docs/ARCHITECTURE.md`
 - The 2B model can't strategize — the planner strategizes for it
 
 ### Smart Host Targeting
-- **Priority weighting**: high (50%) for confirmed access, medium (35%) untested, low (15%) failed, exhausted (0%) for 5+ failures
+- **Priority weighting**: high (60%) for confirmed access, medium (30%) untested, low (10%) failed, exhausted (0%) for 5+ failures
+- **Priority recalculated every turn** from live host memory — self-correcting as failures accumulate
 - **Failure memory**: records every failed credential attempt (e.g., "FAILED SSH admin:admin")
+- **Failed cred filtering**: hints won't suggest already-failed credentials on a host
+- **Untried tool boost**: impacket/nikto/gobuster get 80% selection probability when never tried
 - **Tried-action dedup**: records searchsploit/axfr/enum4linux/nikto/impacket attempts, hints filter them out
 - **Multi-turn mode**: 2-3 consecutive commands on high-priority hosts without rotation
+- **Playbook completion**: persisted in SQLite, marked done on multi-turn end OR context reset
 - Max 30 observations per host (auto-prunes old agent observations)
+- Access indicators tightened: "has SSH open" ≠ confirmed access, only actual findings (shares, Pi-hole, Samba version, dnsmasq)
 
 ### Exploit Chain Tracking
 - Vulnerabilities stored with `chain` column: the sequence of commands that found them

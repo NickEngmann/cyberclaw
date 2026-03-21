@@ -15,7 +15,7 @@ Nightcrawler is an autonomous penetration testing agent running on a OnePlus 8 w
 - Dual/triple llama-server caused OOM (3GB × 2/3 = phone reboot, observed 2026-03-20 and 2026-03-21)
 - Auto-starts 20 min after boot via Magisk watchdog (30s health check, 20 min crash cooldown)
 - **Watchdog uses PID file** (`/data/local/tmp/var/run/llama-server.pid`) + process count verification — fixed 2026-03-21
-- Every 5h: scheduled restart (20s kill wait, verifies exactly 1 process before/after)
+- Every 4h: scheduled restart (20s kill wait, verifies exactly 1 process before/after)
 - **Kali can now SSH to Android**: `ssh -p 9022 shell@127.0.0.1 "command"`
 - Start from Kali: `ssh -p 9022 shell@127.0.0.1 "bash /data/local/nhsystem/kalifs/root/nightcrawler/scripts/start-llm.sh"`
 - Kill from Kali: `ssh -p 9022 shell@127.0.0.1 "pkill -9 -f llama-server"`
@@ -210,6 +210,20 @@ After each command, the agent suggests a random next target:
 - Prevents sequential scanning patterns (.6,.7,.8,.9) that look like a scanner
 - Dead-end hosts are auto-marked when timeouts/down responses are detected
 
+**Exception: Multi-turn mode** — high-priority hosts with confirmed access
+get 2-3 consecutive commands without context reset. Playbook steps are fed
+as specific next-step commands. Context is preserved between turns.
+
+### Smart Targeting (exploit phase)
+In EXPLOIT phase, host selection is priority-weighted:
+- **60%**: high-priority (confirmed access — shares, Pi-hole, Samba, dnsmasq)
+- **30%**: medium (has ports but untested)
+- **10%**: low (3+ failed attacks)
+- **0%**: exhausted (5+ failed attacks — skipped entirely)
+- Priority recalculated every turn from live host memory
+- Failed cred attacks auto-deprioritize hosts over time
+- Confirmed access (SMB shares, DNS responding) keeps hosts high-priority
+
 ## Training Data Capture
 Successful interactions are captured for model finetuning:
 - **Location**: `training_data/` (20GB budget, auto-rotation)
@@ -262,7 +276,7 @@ Fix code if needed, restart service, append to finetuning log.
 
 ### Known memory behavior:
 - llama-server KV cache grows ~200MB/hour (3.4→5.3GB over ~8h observed 2026-03-21)
-- Magisk watchdog restarts llama-server every 5 hours (was 7h, changed 2026-03-21)
+- Magisk watchdog restarts llama-server every 4 hours (was 5h→4h, changed 2026-03-21)
 - Restart drops RSS from ~5GB to ~3.4GB, frees ~2GB system memory
 - Agent survives llama-server restart via error retry logic (hits errors for ~3min during JIT warmup)
 - Android apps respawn and consume ~1.5GB (Google services, keyboard, etc.)
@@ -314,6 +328,9 @@ Available tools verified on Kali NetHunter:
 - **Multi-turn**: 2-3 consecutive commands on high-priority hosts
 - **Exploit chains**: vuln DB tracks the command sequence that found each finding
 - **Report generation**: `/api/report` endpoint + REPORT button in web UI
+- **Failed cred filtering**: hints won't suggest already-failed credentials on a host
+- **Untried tool boost**: impacket/nikto/gobuster get 80% probability when never tried
+- **Playbook completion**: persisted in SQLite, marked done on multi-turn end OR context reset
 - See `docs/FEATURES.md` for full details
 
 ## Cross-Process State (agent ↔ webui)
@@ -365,7 +382,7 @@ pattern regardless of which gate is involved.
 2. +12s: Mount /vendor in Kali chroot
 3. +14s: Kali SSH (22) with retry loop (10 attempts × 30s)
 4. +20min: llama-server watchdog starts (health check every 30s, 20min crash cooldown)
-5. Every 5h: llama-server scheduled restart (PID file enforcement, 20s kill wait, process count verify)
+5. Every 4h: llama-server scheduled restart (PID file enforcement, 20s kill wait, process count verify)
 
 ## After Reboot — Manual Steps
 1. Wait ~23min for llama-server: `curl -s http://127.0.0.1:8080/health`
