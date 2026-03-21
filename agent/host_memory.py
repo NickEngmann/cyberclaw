@@ -421,11 +421,11 @@ def get_host_priority(mac: str) -> str:
     if status == "dead-end":
         return "low"
 
-    # Count successes vs failures in observations
+    # Count confirmed access (not just "has a port open")
     access_indicators = sum(1 for t in obs_texts if any(w in t for w in [
-        "shares accessible", "Pi-hole", "HTTP server", "admin",
-        "VNC", "ACCESS GAINED", "Anonymous", "DNS resolver",
-        "Samba version", "dnsmasq",
+        "shares accessible", "Pi-hole detected", "Pi-hole DNS",
+        "ACCESS GAINED", "Samba version",
+        "dnsmasq", "DNS resolver responding",
     ]))
     failed_attacks = sum(1 for t in obs_texts if t.startswith("FAILED "))
 
@@ -433,7 +433,7 @@ def get_host_priority(mac: str) -> str:
         return "high"
     if failed_attacks >= 5:
         return "exhausted"
-    if failed_attacks >= 2:
+    if failed_attacks >= 3:
         return "low"
     return "medium"
 

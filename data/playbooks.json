@@ -83,7 +83,7 @@
       "id": "ssh_full_attack",
       "trigger_obs": "SSH:",
       "trigger_ports": [22],
-      "repeatable": true,
+      "repeatable": false,
       "desc": "Full SSH credential attack",
       "steps": [
         "nxc ssh {ip} -u pi -p raspberry",
