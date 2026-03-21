@@ -48,9 +48,12 @@ def set_memory(mac: str, memory: dict):
     db.set_state("host_memories", memories)
 
 
+MAX_OBS_PER_HOST = 30  # prevent memory bloat in system prompt
+
+
 def add_observation(mac: str, text: str, source: str = "agent",
                     ip: str = ""):
-    """Add an observation to a host's memory."""
+    """Add an observation to a host's memory. Auto-prunes old entries."""
     memories = get_all_memories()
     if mac not in memories:
         memories[mac] = {
@@ -63,6 +66,12 @@ def add_observation(mac: str, text: str, source: str = "agent",
         memories[mac]["observations"].append({
             "source": source, "text": text, "ts": _ts()
         })
+        # Prune: keep analyst obs + latest N agent obs
+        obs = memories[mac]["observations"]
+        if len(obs) > MAX_OBS_PER_HOST:
+            analyst = [o for o in obs if o.get("source") == "analyst"]
+            agent = [o for o in obs if o.get("source") != "analyst"]
+            memories[mac]["observations"] = analyst + agent[-(MAX_OBS_PER_HOST - len(analyst)):]
         memories[mac]["ip"] = ip or memories[mac].get("ip", "")
         memories[mac]["last_updated"] = _ts()
         db.set_state("host_memories", memories)
@@ -222,7 +231,8 @@ def auto_extract_observations(ip: str, mac: str, command: str,
             try:
                 db.add_vulnerability(
                     ip, "smb", f"Null-session SMB shares: {', '.join(shares)}",
-                    "medium")
+                    "medium",
+                    chain=f"smbclient -N -L //{ip}/ → shares: {', '.join(shares)}")
             except Exception:
                 pass
         samba_ver = re.search(r'Samba\s+(\S+)', output)
@@ -233,7 +243,8 @@ def auto_extract_observations(ip: str, mac: str, command: str,
     if "curl" in command and ("pi-hole" in output.lower() or "Pi-hole" in output):
         try:
             db.add_vulnerability(ip, "http", "Pi-hole admin interface exposed",
-                                 "medium")
+                                 "medium",
+                                 chain=f"curl {command.split('curl')[1][:60]} → Pi-hole HTML detected")
         except Exception:
             pass
 
@@ -434,6 +445,34 @@ def get_failed_attacks(mac: str) -> list:
         return []
     return [o["text"] for o in mem.get("observations", [])
             if o["text"].startswith("FAILED ")]
+
+
+def mark_playbook_done(mac: str, playbook_id: str, ip: str = ""):
+    """Mark a playbook as completed for this host. Persists in SQLite."""
+    add_observation(mac, f"PLAYBOOK_DONE {playbook_id}", source="agent", ip=ip)
+
+
+def is_playbook_done(mac: str, playbook_id: str) -> bool:
+    """Check if a playbook was already run on this host."""
+    mem = get_memory(mac)
+    if not mem:
+        return False
+    return any(o["text"] == f"PLAYBOOK_DONE {playbook_id}"
+               for o in mem.get("observations", []))
+
+
+def mark_playbook_failed(mac: str, playbook_id: str, ip: str = ""):
+    """Mark a playbook as ineffective for this host."""
+    add_observation(mac, f"PLAYBOOK_FAILED {playbook_id}", source="agent", ip=ip)
+
+
+def is_playbook_failed(mac: str, playbook_id: str) -> bool:
+    """Check if a playbook already failed on this host."""
+    mem = get_memory(mac)
+    if not mem:
+        return False
+    return any(o["text"] == f"PLAYBOOK_FAILED {playbook_id}"
+               for o in mem.get("observations", []))
 
 
 def get_tried_actions(mac: str) -> list:

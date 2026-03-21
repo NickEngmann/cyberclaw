@@ -354,11 +354,25 @@ def get_cred_count(network: str = None, network_id: str = None) -> int:
 # ── Vulnerabilities ──────────────────────────────────
 
 def add_vulnerability(host: str, service: str, vuln: str,
-                      severity: str = "medium", network: str = ""):
+                      severity: str = "medium", network: str = "",
+                      chain: str = ""):
+    """Add a vulnerability. `chain` is the exploit path (commands that found it)."""
     conn = _get_conn()
+    # Add chain column if it doesn't exist (migration)
+    try:
+        conn.execute("ALTER TABLE vulnerabilities ADD COLUMN chain TEXT DEFAULT ''")
+        conn.commit()
+    except Exception:
+        pass  # column already exists
+    # Dedup: don't add same vuln for same host
+    existing = conn.execute(
+        "SELECT id FROM vulnerabilities WHERE host=? AND vuln=?",
+        (host, vuln)).fetchone()
+    if existing:
+        return
     conn.execute(
-        "INSERT INTO vulnerabilities (host,service,vuln,severity,network,timestamp) VALUES (?,?,?,?,?,?)",
-        (host, service, vuln, severity, network, _ts())
+        "INSERT INTO vulnerabilities (host,service,vuln,severity,network,timestamp,chain) VALUES (?,?,?,?,?,?,?)",
+        (host, service, vuln, severity, network, _ts(), chain)
     )
     conn.commit()
 

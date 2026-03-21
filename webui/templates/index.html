@@ -616,6 +616,7 @@
             <button onclick="toggleConfig()">&#9881; CONFIG</button>
             <span class="queue-badge" id="queue-badge">Q:0</span>
             <button id="kill-btn" onclick="killSwitch()">&#9940; KILL</button>
+            <button onclick="generateReport()" style="border-color:#0af;color:#0af">&#128196; REPORT</button>
         </div>
 
         <!-- Findings Summary -->
@@ -867,6 +868,59 @@
                 updateKillBtn();
                 updatePauseBtn();
             } catch(e) {}
+        }
+
+        async function generateReport() {
+            try {
+                const resp = await fetch('/api/report');
+                const report = await resp.json();
+                // Format as readable text and trigger download
+                let text = `PENETRATION TEST REPORT\n`;
+                text += `Generated: ${report.generated}\n`;
+                text += `Scope: ${report.scope}\n`;
+                text += `${'='.repeat(60)}\n\n`;
+                text += `EXECUTIVE SUMMARY\n`;
+                text += `-  Hosts Discovered: ${report.summary.hosts_discovered}\n`;
+                text += `-  Vulnerabilities: ${report.summary.vulnerabilities_found} `;
+                text += `(${report.summary.critical} critical, ${report.summary.high} high, `;
+                text += `${report.summary.medium} medium, ${report.summary.low} low)\n`;
+                text += `-  Credentials Found: ${report.summary.credentials_found}\n`;
+                text += `-  Commands Executed: ${report.summary.commands_executed}\n\n`;
+                text += `${'='.repeat(60)}\n`;
+                text += `VULNERABILITIES\n${'='.repeat(60)}\n\n`;
+                for (const v of report.vulnerabilities) {
+                    text += `[${v.severity.toUpperCase()}] ${v.host} — ${v.service}\n`;
+                    text += `  Finding: ${v.finding}\n`;
+                    text += `  Exploit Chain: ${v.exploit_chain}\n`;
+                    text += `  Remediation: ${v.remediation}\n`;
+                    text += `  Discovered: ${v.discovered}\n\n`;
+                }
+                if (report.credentials.length > 0) {
+                    text += `${'='.repeat(60)}\n`;
+                    text += `CREDENTIALS\n${'='.repeat(60)}\n\n`;
+                    for (const c of report.credentials) {
+                        text += `  ${c.host} — ${c.service}: ${c.username}:${c.password}\n`;
+                    }
+                    text += '\n';
+                }
+                text += `${'='.repeat(60)}\n`;
+                text += `HOSTS (${report.hosts.length})\n${'='.repeat(60)}\n\n`;
+                for (const h of report.hosts) {
+                    if (h.ports && h.ports.length > 0) {
+                        text += `  ${h.ip} (${h.mac}) ports: ${h.ports.join(',')}\n`;
+                    }
+                }
+                // Download as file
+                const blob = new Blob([text], {type: 'text/plain'});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `nightcrawler-report-${new Date().toISOString().slice(0,10)}.txt`;
+                a.click();
+                URL.revokeObjectURL(url);
+            } catch(e) {
+                alert('Report generation failed: ' + e.message);
+            }
         }
 
         function toggleConfig() {

@@ -42,6 +42,18 @@ def parse_output(ip: str, mac: str, command: str, output: str,
     if not output or status != "success":
         return result
 
+    # Check for actual command-level failures even when proxy says "success"
+    error_indicators = [
+        "NT_STATUS_ACCESS_DENIED", "NT_STATUS_LOGON_FAILURE",
+        "NT_STATUS_BAD_NETWORK_NAME", "NT_STATUS_IO_TIMEOUT",
+        "Connection refused", "Host seems down", "No route to host",
+        "Authentication failed", "permission denied",
+    ]
+    out_lower = output.lower()
+    if any(e.lower() in out_lower for e in error_indicators):
+        # Command ran but the tool reported failure — don't extract "findings"
+        return result
+
     cmd_lower = command.lower()
     out = output
 
@@ -96,14 +108,24 @@ def parse_output(ip: str, mac: str, command: str, output: str,
             host_memory.add_observation(
                 mac, f"Interesting files on share: {files_str}",
                 source="agent", ip=ip)
-            # Suggest downloading the most interesting file
+            # Safe download: just list the file to prove read access
+            # (kali-mcp uses shlex, no shell chaining with &&)
             for f in result['interesting_files']:
                 if any(f.endswith(ext) for ext in ['.conf', '.env', '.bak',
                        '.passwd', '.key', '.pem']):
                     share = _extract_share(command)
                     if share:
+                        # Use smbclient -c 'more file' to peek at contents
                         result['next_command'] = (
-                            f"smbclient -N //{ip}/{share} -c 'get {f}'")
+                            f"smbclient -N //{ip}/{share} -c 'more {f}'")
+                        try:
+                            db.add_vulnerability(
+                                ip, "smb",
+                                f"Readable file on share: {share}/{f}",
+                                "high",
+                                chain=f"smbclient -N //{ip}/{share} -c 'ls' → found {f}")
+                        except Exception:
+                            pass
                     break
 
     # ── dig axfr: extract hostnames as new targets ──
@@ -111,7 +133,7 @@ def parse_output(ip: str, mac: str, command: str, output: str,
         # Zone transfer succeeded!
         try:
             db.add_vulnerability(ip, "dns", "DNS zone transfer allowed (AXFR)",
-                                 "high")
+                                 "high", chain=f"dig axfr @{ip} → zone data exposed")
             result['vulns_added'] += 1
         except Exception:
             pass

@@ -843,6 +843,117 @@ def api_network_current():
                     "wifi_connected": False, "public_ip": "unknown"})
 
 
+@app.route("/api/report")
+def api_report():
+    """Generate a client-ready penetration test report."""
+    import sqlite3 as _sql
+
+    log_dir = os.environ.get("NC_LOG_DIR",
+                             os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs"))
+    _dbpath = os.path.join(log_dir, "nightcrawler.db")
+
+    vulns, creds, hosts_data = [], [], []
+    try:
+        conn = _sql.connect(_dbpath)
+        conn.row_factory = _sql.Row
+        vulns = [dict(r) for r in conn.execute("SELECT * FROM vulnerabilities ORDER BY severity DESC").fetchall()]
+        creds = [dict(r) for r in conn.execute("SELECT * FROM credentials").fetchall()]
+        hosts_data = [dict(r) for r in conn.execute("SELECT * FROM hosts").fetchall()]
+        total_cmds = conn.execute("SELECT COUNT(*) FROM commands").fetchone()[0]
+        conn.close()
+    except Exception:
+        total_cmds = 0
+
+    # Build report
+    report = {
+        "title": "Nightcrawler Penetration Test Report",
+        "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "scope": "192.168.1.0/24",
+        "summary": {
+            "hosts_discovered": len(hosts_data),
+            "vulnerabilities_found": len(vulns),
+            "credentials_found": len(creds),
+            "commands_executed": total_cmds,
+            "critical": sum(1 for v in vulns if v.get("severity") == "critical"),
+            "high": sum(1 for v in vulns if v.get("severity") == "high"),
+            "medium": sum(1 for v in vulns if v.get("severity") == "medium"),
+            "low": sum(1 for v in vulns if v.get("severity") == "low"),
+        },
+        "vulnerabilities": [],
+        "credentials": [],
+        "hosts": [],
+    }
+
+    # Format vulnerabilities with remediation chain
+    for v in vulns:
+        entry = {
+            "host": v.get("host", ""),
+            "service": v.get("service", ""),
+            "severity": v.get("severity", "medium"),
+            "finding": v.get("vuln", ""),
+            "exploit_chain": v.get("chain", "Not recorded"),
+            "discovered": v.get("timestamp", ""),
+            "remediation": _get_remediation(v.get("service", ""),
+                                            v.get("vuln", "")),
+        }
+        report["vulnerabilities"].append(entry)
+
+    # Format credentials
+    for c in creds:
+        report["credentials"].append({
+            "host": c.get("host", ""),
+            "service": c.get("service", ""),
+            "username": c.get("username", ""),
+            "password": "***REDACTED***",
+            "discovered": c.get("timestamp", ""),
+        })
+
+    # Host summary
+    for h in hosts_data:
+        ports = h.get("ports", "")
+        if isinstance(ports, str):
+            try:
+                ports = json.loads(ports) if ports else []
+            except Exception:
+                ports = []
+        report["hosts"].append({
+            "ip": h.get("ip", ""),
+            "mac": h.get("mac", ""),
+            "hostname": h.get("hostname", ""),
+            "ports": ports,
+        })
+
+    return jsonify(report)
+
+
+def _get_remediation(service: str, vuln: str) -> str:
+    """Generate remediation advice based on the finding."""
+    v_lower = vuln.lower()
+    if "null-session" in v_lower or "null session" in v_lower:
+        return "Disable anonymous/null SMB access. Set 'restrict anonymous = 2' in smb.conf."
+    if "pi-hole" in v_lower:
+        return "Set a strong admin password for Pi-hole. Restrict admin interface to localhost."
+    if "vnc" in v_lower:
+        return "Set a strong VNC password or disable VNC if not needed. Use SSH tunneling instead."
+    if "dns" in v_lower and "zone transfer" in v_lower:
+        return "Restrict zone transfers to authorized secondary DNS servers only."
+    if "telnet" in v_lower:
+        return "Disable telnet entirely. Use SSH for remote access."
+    if "default" in v_lower or "password" in v_lower:
+        return "Change default credentials immediately. Enforce strong password policy."
+    if "cve" in v_lower.lower():
+        return f"Apply vendor security patches for {vuln[:40]}. Check NVD for details."
+    if ".env" in v_lower:
+        return "Remove .env file from web root or restrict access via web server config."
+    if "server-status" in v_lower:
+        return "Restrict /server-status to localhost only in Apache config."
+    if "ftp" in v_lower and "anonymous" in v_lower:
+        return "Disable anonymous FTP access or restrict to read-only non-sensitive data."
+    if "open dns" in v_lower or "resolver" in v_lower:
+        return "Restrict DNS resolver to internal clients only. Disable recursion for external queries."
+    return "Review and remediate based on the specific finding. Consult vendor documentation."
+
+
 def get_tailscale_ip() -> str:
     """Get the Tailscale interface IP. Returns 127.0.0.1 if not available."""
     import subprocess

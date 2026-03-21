@@ -309,11 +309,12 @@ class AgentLoop:
                     if net_ctx:
                         system += f"\n{net_ctx}"
 
-                # Attack planner — strategic directive (every ~50 commands)
-                if self.total_commands % 50 < 3:
-                    plan = attack_planner.generate_plan(max_tokens=150)
-                    if plan:
-                        system += f"\n{plan}"
+                # Attack planner — cache plan, refresh every ~50 commands
+                if (self.total_commands % 50 == 0 or
+                        not hasattr(self, '_cached_plan')):
+                    self._cached_plan = attack_planner.generate_plan(max_tokens=150)
+                if self._cached_plan:
+                    system += f"\n{self._cached_plan}"
 
                 messages = self.context.get_messages()
 
@@ -545,6 +546,20 @@ class AgentLoop:
                             "REASONING: [text] COMMAND: [next step]"
                         )
                         continue
+
+                    # Mark playbook completion if one was active
+                    if self.active_playbook and self.multi_turn_ip:
+                        pb_id = self.active_playbook.get("id", "")
+                        _pb_mac = ""
+                        for _h in db.get_hosts():
+                            if _h["ip"] == self.multi_turn_ip:
+                                _pb_mac = _h.get("mac", "")
+                                break
+                        if _pb_mac and pb_id:
+                            host_memory.mark_playbook_done(
+                                _pb_mac, pb_id, ip=self.multi_turn_ip)
+                        self.active_playbook = None
+                        self.playbook_step = 0
 
                     # Normal: reset context, suggest random host
                     self.context.clear()
@@ -1120,15 +1135,38 @@ class AgentLoop:
         obs_text = " ".join(obs).lower()
 
         for pb in playbooks:
+            pb_id = pb.get("id", "")
             trigger = pb.get("trigger_obs", "").lower()
             trigger_ports = set(pb.get("trigger_ports", []))
 
+            # Skip completed playbooks (unless repeatable, max 3 times) and failed ones
+            repeatable = pb.get("repeatable", False)
+            if host_memory.is_playbook_done(mac, pb_id):
+                if not repeatable:
+                    continue
+                # Count how many times this playbook ran
+                done_count = sum(1 for o in obs if o == f"PLAYBOOK_DONE {pb_id}")
+                if done_count >= 3:
+                    continue  # max 3 repeats
+            if host_memory.is_playbook_failed(mac, pb_id):
+                continue
+
             if trigger in obs_text and (not trigger_ports or
                                          trigger_ports & ports):
+                # Extract actual share names from observations
+                actual_shares = ["share"]  # fallback
+                for o in obs:
+                    if "shares accessible:" in o:
+                        parts = o.split("shares accessible:")[-1]
+                        actual_shares = [s.strip() for s in parts.split(",")
+                                        if s.strip() and s.strip() != "IPC$"]
+                        break
+
                 # Filter out already-tried steps
                 steps = []
                 for step in pb.get("steps", []):
-                    step_cmd = step.format(ip=ip, share="share")
+                    share_name = actual_shares[0] if actual_shares else "share"
+                    step_cmd = step.format(ip=ip, share=share_name)
                     # Check if we already tried this tool
                     skip = False
                     for t in tried:
