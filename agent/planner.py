@@ -88,7 +88,11 @@ class PhasePlanner:
         elif self.current_phase == Phase.ENUMERATE:
             vulns = findings.get("vulnerabilities", 0)
             creds = findings.get("credentials", 0)
-            if vulns > 0 or creds > 0:
+            hosts = findings.get("live_hosts", 0)
+            ports = findings.get("open_ports", 0)
+            # Advance on findings OR after sufficient enumeration:
+            # 10+ hosts with 15+ ports = enough data to start exploiting
+            if vulns > 0 or creds > 0 or (hosts >= 10 and ports >= 15):
                 return self._advance()
 
         elif self.current_phase == Phase.EXPLOIT:

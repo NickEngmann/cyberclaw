@@ -92,6 +92,7 @@ class AgentLoop:
             # ENUMERATE/EXPLOIT: dynamic seed based on known hosts
             # Pick a tool appropriate to the host's known ports
             import random as _rand
+            is_exploit = self.planner.current_phase >= Phase.EXPLOIT
             try:
                 hosts_with_ports = [h for h in db.get_hosts()
                                     if len(h.get("ports", [])) > 0]
@@ -99,33 +100,63 @@ class AgentLoop:
                     h = _rand.choice(hosts_with_ports)
                     ports = h.get("ports", [])
                     ip = h["ip"]
-                    # Pick tool based on ports
                     ps = set(ports)
-                    http_ports = ps & {80, 443, 8080, 8443, 8000, 8888, 3000, 9000, 9200}
-                    if http_ports:
-                        p = min(http_ports)
-                        port_part = "" if p in (80, 443) else f":{p}"
-                        seed_cmd = f"curl -s -I http://{ip}{port_part}/"
-                        seed_out = "HTTP/1.1 200 OK\nServer: nginx/1.18"
-                    elif ps & {445, 139}:
-                        seed_cmd = f"smbclient -N -L //{ip}/"
-                        seed_out = "Sharename  Type  Comment\nshare  Disk"
-                    elif 53 in ps:
-                        seed_cmd = f"dig @{ip} version.bind chaos txt"
-                        seed_out = "status: NOERROR\nversion.bind"
-                    elif 22 in ps:
-                        seed_cmd = f"nmap -sV -T2 -p 22 {ip}"
-                        seed_out = "22/tcp open ssh OpenSSH 9.2p1"
-                    elif ps & {3306, 5432, 1433, 27017, 6379}:
-                        p = min(ps & {3306, 5432, 1433, 27017, 6379})
-                        seed_cmd = f"nmap -sV -T2 -p {p} {ip}"
-                        seed_out = f"{p}/tcp open database"
-                    elif ps & {2375, 2376}:
-                        seed_cmd = f"curl -s http://{ip}:2375/version"
-                        seed_out = '{"Version":"20.10.17"}'
+
+                    if is_exploit:
+                        # EXPLOIT phase: seed with credential-testing examples
+                        if 23 in ps:
+                            seed_cmd = f"nxc telnet {ip} -u admin -p admin"
+                            seed_out = "TELNET  {ip}:23  admin:admin [+] SUCCESS"
+                            seed_reason = f"Test default telnet creds on {ip}."
+                        elif 22 in ps:
+                            seed_cmd = f"nxc ssh {ip} -u pi -p raspberry"
+                            seed_out = "SSH  {ip}:22  pi:raspberry [-] AUTH FAILED"
+                            seed_reason = f"Test default SSH creds on {ip}."
+                        elif ps & {445, 139}:
+                            seed_cmd = f"nxc smb {ip} -u '' -p '' --shares"
+                            seed_out = "SMB  {ip}:445  \\\\{ip}\\share READ"
+                            seed_reason = f"Try SMB null session on {ip}."
+                        elif ps & {80, 8080, 8888}:
+                            p = min(ps & {80, 8080, 8888})
+                            port_part = "" if p == 80 else f":{p}"
+                            seed_cmd = f"curl -s http://{ip}{port_part}/admin/"
+                            seed_out = "HTTP/1.1 200 OK\n<title>Admin</title>"
+                            seed_reason = f"Check admin panel on {ip}."
+                        elif 5900 in ps:
+                            seed_cmd = f"nxc vnc {ip} -p password"
+                            seed_out = "VNC  {ip}:5900  [-] AUTH FAILED"
+                            seed_reason = f"Test VNC default password on {ip}."
+                        else:
+                            seed_cmd = f"nxc ssh {ip} -u root -p root"
+                            seed_out = "SSH  {ip}:22  root:root [-] AUTH FAILED"
+                            seed_reason = f"Test default creds on {ip}."
                     else:
-                        seed_cmd = f"nmap -sV -T2 -p {ports[0]} {ip}"
-                        seed_out = f"{ports[0]}/tcp open unknown"
+                        # ENUMERATE phase: probe services
+                        http_ports = ps & {80, 443, 8080, 8443, 8000, 8888, 3000, 9000, 9200}
+                        if http_ports:
+                            p = min(http_ports)
+                            port_part = "" if p in (80, 443) else f":{p}"
+                            seed_cmd = f"curl -s -I http://{ip}{port_part}/"
+                            seed_out = "HTTP/1.1 200 OK\nServer: nginx/1.18"
+                        elif ps & {445, 139}:
+                            seed_cmd = f"smbclient -N -L //{ip}/"
+                            seed_out = "Sharename  Type  Comment\nshare  Disk"
+                        elif 53 in ps:
+                            seed_cmd = f"dig @{ip} version.bind chaos txt"
+                            seed_out = "status: NOERROR\nversion.bind"
+                        elif 22 in ps:
+                            seed_cmd = f"nmap -sV -T2 -p 22 {ip}"
+                            seed_out = "22/tcp open ssh OpenSSH 9.2p1"
+                        elif ps & {3306, 5432, 1433, 27017, 6379}:
+                            p = min(ps & {3306, 5432, 1433, 27017, 6379})
+                            seed_cmd = f"nmap -sV -T2 -p {p} {ip}"
+                            seed_out = f"{p}/tcp open database"
+                        elif ps & {2375, 2376}:
+                            seed_cmd = f"curl -s http://{ip}:2375/version"
+                            seed_out = '{"Version":"20.10.17"}'
+                        else:
+                            seed_cmd = f"nmap -sV -T2 -p {ports[0]} {ip}"
+                            seed_out = f"{ports[0]}/tcp open unknown"
                     seed_reason = f"Probe {ip} port {ports[0]}."
                 else:
                     seed_cmd = "curl -s -I http://192.168.1.2/"
@@ -136,7 +167,10 @@ class AgentLoop:
                 seed_out = "HTTP/1.1 200 OK\nServer: lighttpd/1.4.53"
                 seed_reason = "Check HTTP on known host."
 
-            self.context.append_user("Enumerate services on discovered hosts.")
+            if is_exploit:
+                self.context.append_user("Attempt access on discovered hosts using default credentials.")
+            else:
+                self.context.append_user("Enumerate services on discovered hosts.")
             self.context.append_assistant(
                 f"REASONING: {seed_reason}\n"
                 f"COMMAND: {seed_cmd}"
@@ -502,10 +536,15 @@ class AgentLoop:
                                     if h["ip"] == suggested:
                                         host_ports = h.get("ports", [])
                                         break
+                                from agent.planner import Phase as _Phase
+                                _exploiting = self.planner.current_phase >= _Phase.EXPLOIT
                                 if not host_ports:
                                     hint = f"Try: nmap -sS -T2 --top-ports 20 {suggested} (unknown ports). "
+                                elif _exploiting:
+                                    # EXPLOIT phase: suggest credential testing
+                                    hint = self._exploit_hint(suggested, set(host_ports))
                                 else:
-                                    # Match tool to first interesting port
+                                    # ENUMERATE phase: probe services
                                     hp = set(host_ports)
                                     http_ports = hp & {80, 443, 8080, 8443, 8000, 8888, 3000, 9000, 9200}
                                     if http_ports:
@@ -752,6 +791,50 @@ class AgentLoop:
                 deduped = prefix + ','.join(unique)
                 command = command[:match.start()] + deduped + command[match.end():]
         return command
+
+    @staticmethod
+    def _exploit_hint(ip: str, ports: set) -> str:
+        """Generate exploit-phase hint: credential testing matched to ports."""
+        import random as _r
+        if 23 in ports:
+            return _r.choice([
+                f"Try: nxc telnet {ip} -u admin -p admin (telnet default creds). ",
+                f"Try: nxc telnet {ip} -u root -p root (telnet default creds). ",
+            ])
+        if 22 in ports:
+            return _r.choice([
+                f"Try: nxc ssh {ip} -u pi -p raspberry (Pi default). ",
+                f"Try: nxc ssh {ip} -u root -p root (SSH default). ",
+                f"Try: nxc ssh {ip} -u admin -p admin (SSH default). ",
+                f"Try: sshpass -p 'raspberry' ssh -o StrictHostKeyChecking=no pi@{ip}. ",
+                f"Try: nxc ssh {ip} -u root -p /usr/share/wordlists/nmap.lst (small wordlist). ",
+            ])
+        if ports & {445, 139}:
+            return _r.choice([
+                f"Try: nxc smb {ip} -u '' -p '' --shares (null session). ",
+                f"Try: enum4linux -a {ip} (SMB enumeration). ",
+                f"Try: nxc smb {ip} -u guest -p '' --shares (guest access). ",
+            ])
+        if ports & {80, 8080, 8888}:
+            p = min(ports & {80, 8080, 8888})
+            pp = "" if p == 80 else f":{p}"
+            return _r.choice([
+                f"Try: curl -s http://{ip}{pp}/admin/ -u admin:admin (admin panel). ",
+                f"Try: gobuster dir -u http://{ip}{pp} -w /usr/share/wordlists/dirb/common.txt -q -t 5. ",
+            ])
+        if 5900 in ports:
+            return f"Try: nxc vnc {ip} -p password (VNC default). "
+        if 53 in ports:
+            return f"Try: dig axfr @{ip} (DNS zone transfer). "
+        if 21 in ports:
+            return f"Try: nxc ftp {ip} -u anonymous -p anonymous (FTP anonymous). "
+        if ports & {3306, 5432, 6379}:
+            if 6379 in ports:
+                return f"Try: redis-cli -h {ip} INFO (Redis unauthenticated). "
+            if 3306 in ports:
+                return f"Try: nxc mysql {ip} -u root -p root (MySQL default). "
+            return f"Try: nxc ssh {ip} -u root -p root (default creds). "
+        return f"Try: nxc ssh {ip} -u root -p root (default creds). "
 
     def _reset_context_with_fewshot(self):
         """Shared context reset with few-shot example.
