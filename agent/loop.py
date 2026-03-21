@@ -102,7 +102,8 @@ class AgentLoop:
                     ip = h["ip"]
                     ps = set(ports)
 
-                    if is_exploit:
+                    # In EXPLOIT phase, 50/50 seed with exploit vs enumerate
+                    if is_exploit and _rand.random() < 0.5:
                         # EXPLOIT phase: seed with credential-testing examples
                         if 23 in ps:
                             seed_cmd = f"nxc telnet {ip} -u admin -p admin"
@@ -168,7 +169,7 @@ class AgentLoop:
                 seed_reason = "Check HTTP on known host."
 
             if is_exploit:
-                self.context.append_user("Attempt access on discovered hosts using default credentials.")
+                self.context.append_user("Mix exploitation with enumeration. Try creds on known hosts AND scan new ones.")
             else:
                 self.context.append_user("Enumerate services on discovered hosts.")
             self.context.append_assistant(
@@ -541,34 +542,15 @@ class AgentLoop:
                                 if not host_ports:
                                     hint = f"Try: nmap -sS -T2 --top-ports 20 {suggested} (unknown ports). "
                                 elif _exploiting:
-                                    # EXPLOIT phase: suggest credential testing
-                                    hint = self._exploit_hint(suggested, set(host_ports))
+                                    # EXPLOIT phase: 50/50 exploit vs enumerate
+                                    import random as _rh
+                                    if _rh.random() < 0.5:
+                                        hint = self._exploit_hint(suggested, set(host_ports))
+                                    else:
+                                        hint = self._enumerate_hint(suggested, set(host_ports))
                                 else:
                                     # ENUMERATE phase: probe services
-                                    hp = set(host_ports)
-                                    http_ports = hp & {80, 443, 8080, 8443, 8000, 8888, 3000, 9000, 9200}
-                                    if http_ports:
-                                        p = min(http_ports)
-                                        scheme = "https" if p in (443, 8443, 9443) else "http"
-                                        port_part = "" if p in (80, 443) else f":{p}"
-                                        hint = f"Try: curl -s -I {scheme}://{suggested}{port_part}/ (port {p}). "
-                                    elif hp & {445, 139}:
-                                        hint = f"Try: smbclient -N -L //{suggested}/ (has SMB). "
-                                    elif 53 in hp:
-                                        hint = f"Try: dig @{suggested} version.bind chaos txt (has DNS). "
-                                    elif 22 in hp:
-                                        hint = f"Try: nmap -sV -T2 -p 22 {suggested} (has SSH). "
-                                    elif hp & {3306, 5432, 1433, 27017, 6379}:
-                                        p = min(hp & {3306, 5432, 1433, 27017, 6379})
-                                        hint = f"Try: nmap -sV -T2 -p {p} {suggested} (database). "
-                                    elif hp & {5900, 5901}:
-                                        hint = f"Try: nmap -sV -T2 -p 5900 {suggested} (VNC). "
-                                    elif hp & {2375, 2376}:
-                                        hint = f"Try: curl -s http://{suggested}:2375/version (Docker API). "
-                                    elif 21 in hp:
-                                        hint = f"Try: nmap -sV -T2 -p 21 {suggested} (FTP). "
-                                    else:
-                                        hint = f"Try: nmap -sV -T2 -p {host_ports[0]} {suggested}. "
+                                    hint = self._enumerate_hint(suggested, set(host_ports))
                             except Exception:
                                 hint = f"Try probing {suggested} next. "
                         else:
@@ -791,6 +773,31 @@ class AgentLoop:
                 deduped = prefix + ','.join(unique)
                 command = command[:match.start()] + deduped + command[match.end():]
         return command
+
+    @staticmethod
+    def _enumerate_hint(ip: str, ports: set) -> str:
+        """Generate enumerate-phase hint: service probing matched to ports."""
+        hp = ports
+        http_ports = hp & {80, 443, 8080, 8443, 8000, 8888, 3000, 9000, 9200}
+        if http_ports:
+            p = min(http_ports)
+            scheme = "https" if p in (443, 8443, 9443) else "http"
+            port_part = "" if p in (80, 443) else f":{p}"
+            return f"Try: curl -s -I {scheme}://{ip}{port_part}/ (port {p}). "
+        if hp & {445, 139}:
+            return f"Try: smbclient -N -L //{ip}/ (has SMB). "
+        if 53 in hp:
+            return f"Try: dig @{ip} version.bind chaos txt (has DNS). "
+        if 22 in hp:
+            return f"Try: nmap -sV -T2 -p 22 {ip} (has SSH). "
+        if hp & {3306, 5432, 1433, 27017, 6379}:
+            p = min(hp & {3306, 5432, 1433, 27017, 6379})
+            return f"Try: nmap -sV -T2 -p {p} {ip} (database). "
+        if hp & {5900, 5901}:
+            return f"Try: nmap -sV -T2 -p 5900 {ip} (VNC). "
+        if 21 in hp:
+            return f"Try: nmap -sV -T2 -p 21 {ip} (FTP). "
+        return f"Try: nmap -sV -T2 -p {min(hp)} {ip}. "
 
     @staticmethod
     def _exploit_hint(ip: str, ports: set) -> str:
