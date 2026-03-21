@@ -492,43 +492,78 @@ class AgentLoop:
                     self.context.clear()
                     output_summary = result.get("output", "")[:500]
 
-                    # Suggest a random host — weighted toward interesting hosts,
-                    # excluding dead-ends and recently probed hosts
+                    # Suggest a random host — weighted by attack surface
                     import random as _random
                     try:
                         all_hosts = db.get_hosts()
                         excluded = set(self.config["mission"]["scope"].get(
                             "excluded_hosts", []))
-                        # Get dead-end MACs from host memory
                         all_memories = host_memory.get_all_memories()
                         dead_end_ips = set()
                         for mac, mem in all_memories.items():
                             if mem.get("status") == "dead-end":
                                 dead_end_ips.add(mem.get("ip", ""))
 
-                        # Filter out excluded, dead-end, and just-scanned hosts
                         recent_ips = set(re.findall(r'192\.168\.1\.\d+',
                                          " ".join(self.recent_commands[-3:])))
 
-                        interesting = [h["ip"] for h in all_hosts
-                                       if h["ip"] not in excluded
-                                       and h["ip"] not in dead_end_ips
-                                       and h["ip"] not in recent_ips
-                                       and len(h.get("ports", [])) > 0]
-                        others = [h["ip"] for h in all_hosts
-                                  if h["ip"] not in excluded
-                                  and h["ip"] not in dead_end_ips
-                                  and h["ip"] not in recent_ips
-                                  and len(h.get("ports", [])) == 0]
+                        from agent.planner import Phase as _Ph
+                        _is_exploit = self.planner.current_phase >= _Ph.EXPLOIT
 
-                        if interesting and _random.random() < 0.7:
-                            suggested = _random.choice(interesting)
-                        elif others:
-                            suggested = _random.choice(others)
-                        elif interesting:
-                            suggested = _random.choice(interesting)
+                        if _is_exploit:
+                            # EXPLOIT: weight by attack surface priority
+                            high, medium, low = [], [], []
+                            for h in all_hosts:
+                                ip = h["ip"]
+                                if ip in excluded or ip in dead_end_ips or ip in recent_ips:
+                                    continue
+                                if not h.get("ports"):
+                                    continue
+                                pri = host_memory.get_host_priority(h.get("mac", ""))
+                                if pri == "high":
+                                    high.append(ip)
+                                elif pri == "exhausted":
+                                    pass  # skip exhausted hosts
+                                elif pri == "low":
+                                    low.append(ip)
+                                else:
+                                    medium.append(ip)
+
+                            # Heavy weight toward high-priority (confirmed access)
+                            r = _random.random()
+                            if high and r < 0.50:
+                                suggested = _random.choice(high)
+                            elif medium and r < 0.85:
+                                suggested = _random.choice(medium)
+                            elif low:
+                                suggested = _random.choice(low)
+                            elif high:
+                                suggested = _random.choice(high)
+                            elif medium:
+                                suggested = _random.choice(medium)
+                            else:
+                                suggested = ""
                         else:
-                            suggested = ""
+                            # ENUMERATE: original logic
+                            interesting = [h["ip"] for h in all_hosts
+                                           if h["ip"] not in excluded
+                                           and h["ip"] not in dead_end_ips
+                                           and h["ip"] not in recent_ips
+                                           and len(h.get("ports", [])) > 0]
+                            others = [h["ip"] for h in all_hosts
+                                      if h["ip"] not in excluded
+                                      and h["ip"] not in dead_end_ips
+                                      and h["ip"] not in recent_ips
+                                      and len(h.get("ports", [])) == 0]
+
+                            if interesting and _random.random() < 0.7:
+                                suggested = _random.choice(interesting)
+                            elif others:
+                                suggested = _random.choice(others)
+                            elif interesting:
+                                suggested = _random.choice(interesting)
+                            else:
+                                suggested = ""
                         if suggested:
                             # Check if we know this host's ports
                             try:
@@ -542,9 +577,20 @@ class AgentLoop:
                                 if not host_ports:
                                     hint = f"Try: nmap -sS -T2 --top-ports 20 {suggested} (unknown ports). "
                                 elif _exploiting:
-                                    # EXPLOIT phase: 50/50 exploit vs enumerate
+                                    # EXPLOIT: use depth hints for hosts with findings,
+                                    # standard hints for others
                                     import random as _rh
-                                    if _rh.random() < 0.5:
+                                    # Look up MAC for this IP
+                                    _mac = ""
+                                    for _h in all_hosts:
+                                        if _h["ip"] == suggested:
+                                            _mac = _h.get("mac", "")
+                                            break
+                                    _pri = host_memory.get_host_priority(_mac) if _mac else "medium"
+                                    if _pri == "high" and _mac:
+                                        # High-priority: go deeper into confirmed access
+                                        hint = self._depth_hint(suggested, _mac, set(host_ports))
+                                    elif _rh.random() < 0.5:
                                         hint = self._exploit_hint(suggested, set(host_ports))
                                     else:
                                         hint = self._enumerate_hint(suggested, set(host_ports))
@@ -773,6 +819,92 @@ class AgentLoop:
                 deduped = prefix + ','.join(unique)
                 command = command[:match.start()] + deduped + command[match.end():]
         return command
+
+    @staticmethod
+    def _depth_hint(ip: str, mac: str, ports: set) -> str:
+        """Generate exploit-depth hint based on what's already been found.
+
+        Instead of re-running the same probe, suggest the NEXT logical
+        step deeper into confirmed access points.
+        """
+        import random as _r
+        findings = host_memory.get_access_findings(mac)
+        failed = host_memory.get_failed_attacks(mac)
+        failed_set = set(failed)  # for quick lookup
+
+        hints = []
+
+        # SMB depth: if shares are known, read them instead of re-listing
+        if any("shares accessible" in f for f in findings):
+            share_match = None
+            for f in findings:
+                if "shares accessible" in f:
+                    share_match = f
+            if share_match:
+                # Extract share names
+                shares = [s.strip() for s in
+                          share_match.replace("SMB shares accessible:", "").split(",")]
+                for share in shares:
+                    share = share.strip()
+                    if share and share != "IPC$":
+                        hints.extend([
+                            f"Try: smbclient -N //{ip}/{share} -c 'ls' (read share contents). ",
+                            f"Try: smbclient -N //{ip}/{share} -c 'recurse ON; ls' (deep list). ",
+                        ])
+            hints.extend([
+                f"Try: nxc smb {ip} -u '' -p '' --rid-brute (enumerate users). ",
+                f"Try: enum4linux -a {ip} (full SMB enumeration). ",
+            ])
+
+        # Pi-hole depth: try admin panel paths
+        if any("Pi-hole" in f or "pi-hole" in f for f in findings):
+            hints.extend([
+                f"Try: curl -s http://{ip}/admin/ (Pi-hole admin panel). ",
+                f"Try: curl -s http://{ip}/admin/api.php (Pi-hole API). ",
+                f"Try: curl -s http://{ip}/admin/scripts/pi-hole/php/auth.php (auth check). ",
+                f"Try: gobuster dir -u http://{ip} -w /usr/share/wordlists/dirb/common.txt -q -t 5. ",
+            ])
+
+        # HTTP depth: if server responds, probe deeper
+        if any("HTTP server" in f or "HTTP 403" in f for f in findings):
+            hints.extend([
+                f"Try: curl -s http://{ip}/robots.txt (hidden paths). ",
+                f"Try: curl -s http://{ip}/.env (leaked config). ",
+                f"Try: curl -s http://{ip}/server-status (Apache status). ",
+                f"Try: dirb http://{ip} /usr/share/wordlists/dirb/small.txt -S (dir scan). ",
+            ])
+
+        # VNC depth: if VNC is open, try different approaches
+        if 5900 in ports:
+            if not any("VNC" in f and "FAILED" in f for f in failed):
+                hints.extend([
+                    f"Try: nxc vnc {ip} -p password (VNC default). ",
+                    f"Try: nxc vnc {ip} -p admin (VNC admin). ",
+                    f"Try: nxc vnc {ip} -p raspberry (VNC pi). ",
+                ])
+
+        # Samba version known: try specific exploits
+        if any("Samba version" in f for f in findings):
+            hints.extend([
+                f"Try: impacket-samrdump {ip} (enumerate SAM users). ",
+                f"Try: impacket-rpcdump {ip} (RPC endpoints). ",
+            ])
+
+        # DNS depth: try zone transfer, reverse lookups
+        if any("DNS resolver" in f or "dnsmasq" in f for f in findings):
+            hints.extend([
+                f"Try: dig axfr @{ip} (zone transfer). ",
+                f"Try: dig @{ip} -x 192.168.1.2 (reverse lookup). ",
+                f"Try: dig @{ip} any (all records). ",
+            ])
+
+        # Filter out hints for attacks we already failed
+        # (e.g., if we failed SSH admin:admin, don't suggest it again)
+        if hints:
+            return _r.choice(hints)
+
+        # Fallback to standard exploit hint if no depth available
+        return AgentLoop._exploit_hint(ip, ports)
 
     @staticmethod
     def _enumerate_hint(ip: str, ports: set) -> str:

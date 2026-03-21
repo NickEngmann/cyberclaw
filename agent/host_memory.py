@@ -125,6 +125,34 @@ def auto_extract_observations(ip: str, mac: str, command: str,
     if status != "success":
         return
 
+    # Record failed credential attacks (nxc, sshpass, hydra)
+    # so the agent doesn't retry the same creds on the same host
+    if any(t in command for t in ['nxc ', 'sshpass ', 'hydra ']):
+        if '[-]' in output or 'AUTH FAILED' in output.upper():
+            # Extract user:pass from the command
+            user_match = re.search(r'-u\s+(\S+)', command)
+            pass_match = re.search(r"-p\s+'?([^'\s]+)", command)
+            if not pass_match:
+                pass_match = re.search(r'-p\s+(\S+)', command)
+            if user_match and pass_match:
+                user = user_match.group(1)
+                passwd = pass_match.group(1)
+                # Truncate wordlist paths
+                if '/' in passwd:
+                    passwd = passwd.split('/')[-1]
+                proto = 'SSH'
+                if 'smb' in command: proto = 'SMB'
+                elif 'vnc' in command: proto = 'VNC'
+                elif 'telnet' in command: proto = 'TELNET'
+                elif 'ftp' in command: proto = 'FTP'
+                add_observation(mac, f"FAILED {proto} {user}:{passwd}",
+                                source="agent", ip=ip)
+        elif '[+]' in output or 'SUCCESS' in output.upper():
+            add_observation(mac, f"ACCESS GAINED via {command[:60]}",
+                            source="agent", ip=ip)
+            update_status(mac, "compromised")
+            add_tag(mac, "pwned")
+
     observations = []
 
     # HTTP server identification
@@ -237,6 +265,65 @@ def build_prompt_context(max_tokens: int = 300) -> str:
     if not lines:
         return ""
     return "HOST MEMORY:\n" + "\n".join(lines)
+
+
+def get_host_priority(mac: str) -> str:
+    """Classify host for weighted selection during exploit phase.
+
+    Returns: 'high' | 'medium' | 'low' | 'exhausted'
+    - high: confirmed open access (shares, admin panels, services responding)
+    - medium: has ports but no findings yet (untested)
+    - low: only failed attacks recorded
+    - exhausted: many failed attacks, no successes (deprioritize)
+    """
+    mem = get_memory(mac)
+    if not mem:
+        return "medium"
+
+    obs_texts = [o["text"] for o in mem.get("observations", [])]
+    status = mem.get("status", "unknown")
+
+    if status == "compromised":
+        return "high"
+    if status == "dead-end":
+        return "low"
+
+    # Count successes vs failures in observations
+    access_indicators = sum(1 for t in obs_texts if any(w in t for w in [
+        "shares accessible", "Pi-hole", "HTTP server", "admin",
+        "VNC", "ACCESS GAINED", "Anonymous", "DNS resolver",
+        "Samba version", "dnsmasq",
+    ]))
+    failed_attacks = sum(1 for t in obs_texts if t.startswith("FAILED "))
+
+    if access_indicators > 0:
+        return "high"
+    if failed_attacks >= 5:
+        return "exhausted"
+    if failed_attacks >= 2:
+        return "low"
+    return "medium"
+
+
+def get_failed_attacks(mac: str) -> list:
+    """Get list of failed attack strings for a host (for dedup in hints)."""
+    mem = get_memory(mac)
+    if not mem:
+        return []
+    return [o["text"] for o in mem.get("observations", [])
+            if o["text"].startswith("FAILED ")]
+
+
+def get_access_findings(mac: str) -> list:
+    """Get confirmed access findings for exploit depth hints."""
+    mem = get_memory(mac)
+    if not mem:
+        return []
+    access_words = ["shares accessible", "Pi-hole", "HTTP server",
+                    "HTTP 403", "VNC", "Samba version", "DNS resolver",
+                    "dnsmasq", "admin", "ACCESS GAINED"]
+    return [o["text"] for o in mem.get("observations", [])
+            if any(w in o["text"] for w in access_words)]
 
 
 def export_memories() -> dict:
