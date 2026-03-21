@@ -27,8 +27,16 @@ echo "[*] Starting llama-server on GPU (port ${PORT})..."
 echo "[*] Model: $(basename ${MODEL})"
 echo "[*] Context: 4096 tokens"
 
-# Kill old instances
-pkill -f "llama-server.*${PORT}" 2>/dev/null; sleep 2
+# Kill old instances (SIGKILL — graceful SIGTERM doesn't work reliably
+# when llama-server is doing GPU/OpenCL work, causing dual-process OOM)
+pkill -9 -f "llama-server.*${PORT}" 2>/dev/null
+sleep 2
+# Verify kill succeeded — retry if still alive
+if pgrep -f "llama-server.*${PORT}" >/dev/null 2>&1; then
+    echo "[!] llama-server still alive after SIGKILL, retrying..."
+    pkill -9 -f "llama-server" 2>/dev/null
+    sleep 3
+fi
 
 # Free RAM
 am kill-all 2>/dev/null
