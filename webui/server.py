@@ -166,16 +166,29 @@ def api_state():
     except Exception:
         pass
 
-    # Override with disk data (more reliable than in-memory when separate processes)
+    # Override with disk data + DB data
+    # Read creds/vulns from SQLite (authoritative) instead of disk JSON
+    db_creds, db_vulns = [], []
+    import sqlite3 as _sql
+    _dbpath = os.path.join(log_dir, "nightcrawler.db")
+    if os.path.exists(_dbpath):
+        _conn = _sql.connect(_dbpath)
+        _conn.row_factory = _sql.Row
+        db_creds = [dict(r) for r in _conn.execute("SELECT * FROM credentials").fetchall()]
+        db_vulns = [dict(r) for r in _conn.execute("SELECT * FROM vulnerabilities").fetchall()]
+        _conn.close()
+    db_cred_count = len(db_creds) or disk_findings.get("credentials", 0)
+    db_vuln_count = len(db_vulns) or disk_findings.get("vulnerabilities", 0)
+
     state["findings"] = {
         "hosts": disk_findings.get("live_hosts", 0),
         "ports": sum(len(h.get("ports", [])) for h in disk_findings.get("hosts", [])),
-        "creds": disk_findings.get("credentials", 0),
-        "vulns": disk_findings.get("vulnerabilities", 0),
+        "creds": db_cred_count,
+        "vulns": db_vuln_count,
     }
     state["hosts"] = disk_findings.get("hosts", [])
-    state["creds"] = disk_findings.get("creds", [])
-    state["vulns"] = disk_findings.get("vulns", [])
+    state["creds"] = db_creds
+    state["vulns"] = db_vulns
     state["wifi_up"] = disk_findings.get("wifi_connected", False)
 
     # Use disk feed if in-memory is empty

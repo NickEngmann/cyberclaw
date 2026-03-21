@@ -152,6 +152,22 @@ def auto_extract_observations(ip: str, mac: str, command: str,
                             source="agent", ip=ip)
             update_status(mac, "compromised")
             add_tag(mac, "pwned")
+            # Record formal credential in DB
+            try:
+                user_match = re.search(r'-u\s+(\S+)', command)
+                pass_match = re.search(r"-p\s+'?([^'\s]+)", command)
+                if not pass_match:
+                    pass_match = re.search(r'-p\s+(\S+)', command)
+                if user_match and pass_match:
+                    proto = 'ssh'
+                    if 'smb' in command: proto = 'smb'
+                    elif 'vnc' in command: proto = 'vnc'
+                    elif 'telnet' in command: proto = 'telnet'
+                    elif 'ftp' in command: proto = 'ftp'
+                    db.add_credential(proto, user_match.group(1),
+                                      pass_match.group(1), ip)
+            except Exception:
+                pass
 
     observations = []
 
@@ -179,14 +195,97 @@ def auto_extract_observations(ip: str, mac: str, command: str,
         if shares:
             observations.append(f"SMB shares accessible: {', '.join(shares)}")
             add_tag(mac, "smb")
+            # Record as vulnerability — unauthenticated SMB share access
+            try:
+                db.add_vulnerability(
+                    ip, "smb", f"Null-session SMB shares: {', '.join(shares)}",
+                    "medium")
+            except Exception:
+                pass
         samba_ver = re.search(r'Samba\s+(\S+)', output)
         if samba_ver:
             observations.append(f"Samba version: {samba_ver.group(1)}")
+
+    # Pi-hole admin exposed
+    if "curl" in command and ("pi-hole" in output.lower() or "Pi-hole" in output):
+        try:
+            db.add_vulnerability(ip, "http", "Pi-hole admin interface exposed",
+                                 "medium")
+        except Exception:
+            pass
+
+    # HTTP sensitive files
+    if "curl" in command:
+        if ".env" in command and output.strip() and "404" not in output:
+            try:
+                db.add_vulnerability(ip, "http", ".env file exposed (possible credential leak)",
+                                     "high")
+            except Exception:
+                pass
+        if "robots.txt" in command and output.strip() and "404" not in output and "Disallow" in output:
+            try:
+                db.add_vulnerability(ip, "http", f"robots.txt exposes paths: {output[:100]}",
+                                     "low")
+            except Exception:
+                pass
+        if "server-status" in command and "200" in output:
+            try:
+                db.add_vulnerability(ip, "http", "Apache server-status exposed",
+                                     "medium")
+            except Exception:
+                pass
+
+    # DNS zone transfer success
+    if "dig" in command and "axfr" in command and "XFR size" in output:
+        try:
+            db.add_vulnerability(ip, "dns", "DNS zone transfer allowed (AXFR)",
+                                 "high")
+        except Exception:
+            pass
 
     # DNS
     if "dig" in command and "NOERROR" in output:
         observations.append("DNS resolver responding")
         add_tag(mac, "dns")
+
+    # Nmap NSE vuln findings
+    if "nmap" in command and "--script=" in command:
+        if "VULNERABLE" in output:
+            vuln_match = re.search(r'(CVE-\d{4}-\d+|ms\d{2}-\d+)', output, re.IGNORECASE)
+            vuln_name = vuln_match.group(1) if vuln_match else "NSE vuln detected"
+            script_match = re.search(r'--script=(\S+)', command)
+            service = script_match.group(1).replace('*','') if script_match else "unknown"
+            try:
+                db.add_vulnerability(ip, service, f"VULNERABLE: {vuln_name} ({output[:100]})",
+                                     "critical")
+            except Exception:
+                pass
+        # CVE findings from vulners
+        if "CVE-" in output:
+            cves = re.findall(r'(CVE-\d{4}-\d+)', output)
+            for cve in cves[:3]:  # max 3 per scan
+                try:
+                    db.add_vulnerability(ip, "ssh", f"CVE found: {cve}", "medium")
+                except Exception:
+                    pass
+
+    # VNC no-auth
+    if "vnc" in command.lower() and ("Authentication: None" in output or
+                                      "[+]" in output):
+        try:
+            db.add_vulnerability(ip, "vnc", "VNC no authentication required",
+                                 "critical")
+        except Exception:
+            pass
+
+    # FTP anonymous access
+    if ("ftp" in command.lower() and "anonymous" in command.lower() and
+            "[+]" in output):
+        try:
+            db.add_vulnerability(ip, "ftp", "FTP anonymous access allowed",
+                                 "medium")
+        except Exception:
+            pass
 
     # Nmap service versions
     if "nmap" in command and "open" in output:
