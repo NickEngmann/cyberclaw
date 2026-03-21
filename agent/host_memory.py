@@ -137,7 +137,10 @@ def auto_extract_observations(ip: str, mac: str, command: str,
     # Record failed credential attacks (nxc, sshpass, hydra)
     # so the agent doesn't retry the same creds on the same host
     if any(t in command for t in ['nxc ', 'sshpass ', 'hydra ']):
-        if '[-]' in output or 'AUTH FAILED' in output.upper():
+        # VNC: nxc vnc outputs [*] RFB without [+] on failure — treat as failed
+        is_vnc_no_success = ('vnc' in command.lower() and '[+]' not in output
+                             and '[*]' in output)
+        if '[-]' in output or 'AUTH FAILED' in output.upper() or is_vnc_no_success:
             # Extract user:pass from the command
             user_match = re.search(r'-u\s+(\S+)', command)
             pass_match = re.search(r"-p\s+'?([^'\s]+)", command)
