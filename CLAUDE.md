@@ -234,6 +234,10 @@ Fix code if needed, restart service, append to finetuning log.
 - **Garbage detection** with 5-streak context reset prevents model spiral
 - **Duplicate command detection** forces tool/target diversification
 - **Patient host rotation** — spread activity across network, one action per host per turn
+- **Same-host enforcement** — rejects commands targeting the same IP as the previous turn
+- **Time-based stuck detection** — 5min without a command = force context reset (safety net)
+- **Target IP required** — network tools (nmap, curl, dig, etc.) must include an IP address
+- **Port dedup** — nmap -p lists cleaned of duplicates before execution
 - **SQLite backend** (not JSON files) for memory efficiency and concurrent access
 - **MAC-keyed hosts** survive DHCP changes, tagged by network_id (gateway MAC hash)
 - **Network discrimination**: Same CIDR on different routers = separate data
@@ -241,16 +245,33 @@ Fix code if needed, restart service, append to finetuning log.
 - **Host memory** — auto-generated observations prevent repeating dead-end approaches
 - **Agent RSS stays ~35-50MB** — no memory leak when not restarting repeatedly
 - Repeated agent restarts DO leak memory (Python process accumulation) — avoid
+- **No _execute retries for app errors** — only transport errors retry (prevents 3x audit entries)
+
+## Pipeline Validation (agent/loop.py)
+Commands pass through 5 validation gates before execution:
+1. **Dead-end skip**: hosts marked dead-end in host_memory are skipped
+2. **Same-host enforcement**: rejects if target IP == last executed IP
+3. **_is_valid_command()**: rejects fake paths, placeholders, -T3+, missing target IP
+4. **_is_duplicate()**: exact match against last 5 commands
+5. **_dedup_ports()**: cleans duplicate ports in nmap -p lists
+
+All rejection paths increment `garbage_streak`. At streak 5, a shared
+`_reset_context_with_fewshot()` fires — clears context, injects a
+concrete nmap example on a random host, clears dedup window + last IP.
+Time-based stuck detection (5min) is a backstop that catches any stuck
+pattern regardless of which gate is involved.
 
 ## 2B Model Behavior Notes (Qwen3.5-2B-Unredacted-MAX Q8_0)
 - **Abliterated** — no safety refusals, no re-prompting needed
 - ~50% command success rate (inherent limit of 2B parameters)
 - Produces garbage/number sequences ~25% of turns
 - Follows few-shot examples more than system prompt instructions
+- **Stuck loops**: model fixates on reasoning (e.g., "SSH open, SMB open") without producing COMMAND — or repeats the same command. Fixed with 5-streak reset + 5min time-based backstop.
 - Verbose reasoning eats tokens — "10 words max" in system prompt helps
 - Temperature 0.2 gives best format compliance
 - max_tokens 200 balances completeness vs garbage
 - Stealth: system prompt enforces -T2 for nmap (never -T4/-T5)
+- **Ignores host suggestions** — model often follows up on last-seen host instead of suggested target. Same-host enforcement now forces rotation.
 
 ## Development Notes
 - Agent auto-detects network: resumes at correct phase based on existing findings
@@ -310,3 +331,5 @@ After ANY testing that creates data in the DB (test networks, test hosts, demo d
 - OpenCL embedded kernels: 60+ min JIT (use non-embedded)
 - 2B model garbage rate ~50% — handled by garbage detection + context reset
 - Context overflow at old 4096 limit — fixed with 8192
+- 2B model stuck loops: fixates on reasoning without COMMAND (3 incidents in 3h observed 2026-03-21). Fixed with time-based backstop (5min) + dup-streak reset + few-shot resets
+- smbclient path hallucination: model sometimes puts CIDR or angle brackets in share path (e.g., `//<192.168.1.15>/`, `//ip/10.0.0.0/24`). Harmless (command fails) but wastes a turn
