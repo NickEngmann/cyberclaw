@@ -992,7 +992,7 @@ class AgentLoop:
         # Version-based CVE lookup (always useful)
         if 22 in ports:
             hints.extend([
-                f"Try: searchsploit openssh 8.2 (check for CVEs). ",
+                f"Try: nmap -T2 --script=ssh-auth-methods -p 22 {ip} (SSH auth check). ",
                 f"Try: nmap -T2 --script=vulners -p 22 {ip} (CVE scan SSH). ",
                 f"Try: nxc ssh {ip} -u pi -p raspberry (Pi default). ",
                 f"Try: nxc ssh {ip} -u root -p root (SSH default). ",
@@ -1013,7 +1013,7 @@ class AgentLoop:
                 f"Try: enum4linux -a {ip} (full SMB enum). ",
                 f"Try: impacket-samrdump {ip} (SAM user dump). ",
                 f"Try: impacket-rpcdump {ip} (RPC endpoints). ",
-                f"Try: searchsploit samba 4.17 (check Samba CVEs). ",
+                f"Try: impacket-samrdump {ip} (enumerate SAM users). ",
             ])
         if ports & {80, 443, 8080, 8888}:
             p = min(ports & {80, 443, 8080, 8888})
@@ -1035,7 +1035,7 @@ class AgentLoop:
         if 53 in ports:
             hints.extend([
                 f"Try: dig axfr @{ip} (DNS zone transfer). ",
-                f"Try: searchsploit dnsmasq 2.9 (check dnsmasq CVEs). ",
+                f"Try: dig axfr @{ip} (DNS zone transfer). ",
             ])
         if 21 in ports:
             hints.extend([
@@ -1051,7 +1051,7 @@ class AgentLoop:
         if not hints:
             hints = [
                 f"Try: nmap -T2 --script=vulners -p {min(ports)} {ip} (CVE scan). ",
-                f"Try: searchsploit [service version from {ip}] (find exploits). ",
+                f"Try: nmap -T2 --script=vulners -p 22 {ip} (CVE scan). ",
             ]
         return _r.choice(hints)
 
