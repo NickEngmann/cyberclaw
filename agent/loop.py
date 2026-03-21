@@ -1223,6 +1223,17 @@ class AgentLoop:
         self.garbage_streak = 0
         self.recent_commands.clear()
         self.last_executed_ip = ""
+        # Mark active playbook as done before clearing (reset = playbook interrupted)
+        if self.active_playbook and self.multi_turn_ip:
+            _pb_id = self.active_playbook.get("id", "")
+            _rst_mac = ""
+            for _h in db.get_hosts():
+                if _h["ip"] == self.multi_turn_ip:
+                    _rst_mac = _h.get("mac", "")
+                    break
+            if _rst_mac and _pb_id:
+                host_memory.mark_playbook_done(
+                    _rst_mac, _pb_id, ip=self.multi_turn_ip)
         self.multi_turn_remaining = 0
         self.multi_turn_ip = ""
         self.active_playbook = None
