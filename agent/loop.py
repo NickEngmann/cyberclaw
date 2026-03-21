@@ -380,6 +380,19 @@ class AgentLoop:
                                     target_ips[0] == self.multi_turn_ip):
                                 # Multi-turn: allow consecutive on same host
                                 self.multi_turn_remaining -= 1
+                                # Mark playbook done when last step consumed
+                                if self.multi_turn_remaining == 0 and self.active_playbook:
+                                    _pb_id = self.active_playbook.get("id", "")
+                                    _mt_mac = ""
+                                    for _h in db.get_hosts():
+                                        if _h["ip"] == self.multi_turn_ip:
+                                            _mt_mac = _h.get("mac", "")
+                                            break
+                                    if _mt_mac and _pb_id:
+                                        host_memory.mark_playbook_done(
+                                            _mt_mac, _pb_id, ip=self.multi_turn_ip)
+                                    self.active_playbook = None
+                                    self.playbook_step = 0
                             else:
                                 self.garbage_streak += 1
                                 push_feed("warning",
