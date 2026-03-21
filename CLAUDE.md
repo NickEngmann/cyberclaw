@@ -218,19 +218,21 @@ Fix code if needed, restart service, append to finetuning log.
 - Pipeline violations (fake paths, stealth, dead hosts)
 
 ### Known memory behavior:
-- llama-server KV cache grows ~1.3GB over 2-3h of operation (4.6→5.9GB observed)
-- This is a known llama.cpp behavior — not easily fixable without server restart
+- llama-server KV cache grows ~200MB/hour (3.4→5.3GB over ~8h observed 2026-03-21)
+- Magisk watchdog restarts llama-server every 5 hours (was 7h, changed 2026-03-21)
+- Restart drops RSS from ~5GB to ~3.4GB, frees ~2GB system memory
+- Agent survives llama-server restart via error retry logic (hits errors for ~3min during JIT warmup)
 - Android apps respawn and consume ~1.5GB (Google services, keyboard, etc.)
-- Agent RSS stays stable at ~48MB — no Python-side leak
-- Periodic phone restart (every 6-8h) is the practical mitigation
-- The health check now tracks llama-server RSS and warns at >5GB
+- Agent RSS stays stable at ~50MB — no Python-side leak
+- System memory can drop to ~750MB under pressure (Android kills apps to compensate)
+- The health check tracks llama-server RSS and warns at >5GB
 
 ### Cron context file: `scripts/cron-context.md`
 ### Finetuning log: `nightcrawler-finetuning-logs.md` (gitignored, runtime data)
 
 ## Key Architecture Decisions
 - **Few-shot prompting** is essential — the 2B model follows examples, not instructions
-- **Phase-aware seed**: RECON uses nmap example, ENUMERATE uses curl example
+- **Phase-aware seed**: RECON uses nmap, ENUMERATE uses service probes, EXPLOIT uses 50/50 cred-test/enumerate
 - **Garbage detection** with 5-streak context reset prevents model spiral
 - **Duplicate command detection** forces tool/target diversification
 - **Patient host rotation** — spread activity across network, one action per host per turn
@@ -246,6 +248,26 @@ Fix code if needed, restart service, append to finetuning log.
 - **Agent RSS stays ~35-50MB** — no memory leak when not restarting repeatedly
 - Repeated agent restarts DO leak memory (Python process accumulation) — avoid
 - **No _execute retries for app errors** — only transport errors retry (prevents 3x audit entries)
+
+## Exploit Toolkit (phase 3)
+The EXPLOIT phase mixes credential testing with continued enumeration (50/50).
+Available tools verified on Kali NetHunter:
+- **CVE lookup**: `searchsploit [service] [version]` — offline exploit-db
+- **Vuln scanning**: `nmap --script=smb-vuln*`, `--script=vulners`, `--script=http-vuln*`
+- **Credential testing**: `nxc ssh/smb/telnet/vnc/ftp/mysql` with defaults + wordlists
+- **SMB deep enum**: `enum4linux -a`, `impacket-samrdump`, `impacket-rpcdump`
+- **Web probing**: `gobuster`, `dirb`, `curl robots.txt/.env/server-status`
+- **Post-exploit**: `impacket-secretsdump` (if admin access gained)
+- Phase auto-triggers when: hosts >= 10 AND ports >= 15 (or creds/vulns found)
+- Context hints randomly suggest exploit OR enumerate tools each turn
+- Prompt is hot-reloadable: edit `prompts/phase3_exploit.md`
+
+## Cross-Process State (agent ↔ webui)
+The agent and webui daemon are separate processes. State is shared via:
+- **SQLite**: `agent_ui_state` key in state table (phase, mode, uptime, stats)
+- **update_state()** in agent loop persists to SQLite each iteration
+- **api_state()** in webui reads from SQLite + disk findings
+- This was added 2026-03-21 to fix the UI showing stale phase after EXPLOIT transition
 
 ## Pipeline Validation (agent/loop.py)
 Commands pass through 5 validation gates before execution:
@@ -275,16 +297,21 @@ pattern regardless of which gate is involved.
 
 ## Development Notes
 - Agent auto-detects network: resumes at correct phase based on existing findings
+- Startup phase detection: EXPLOIT if hosts>=10 + ports>=15, ENUMERATE if hosts>=3, else RECON
 - Thor (AGX 128GB) is optional — agent operates fully standalone
 - Web UI binds to Tailscale IP only (not exposed on target network)
 - All commands audited to SQLite + commands.jsonl regardless of allow/block
 - Health check monitors: services, agent RSS, dual llama-server, stale timeline, disk, memory
+- Exploit phase throughput: ~2-3 cmd/cycle (vs 4 in enumerate) due to longer prompt context
+- Time-based stuck detection fires ~2-3 times per hour in exploit phase (self-healing)
+- Training capture: ~185 examples after 818 commands (2026-03-21 03:25)
 
 ## Boot Sequence (Magisk service.sh)
 1. +10s: Android SSH (9022)
 2. +12s: Mount /vendor in Kali chroot
 3. +14s: Kali SSH (22)
 4. +20min: llama-server watchdog starts (health check every 30s, 20min crash cooldown)
+5. Every 5h: llama-server scheduled restart (KV cache reset, frees ~2GB)
 
 ## After Reboot — Manual Steps
 1. Wait ~23min for llama-server: `curl -s http://127.0.0.1:8080/health`
