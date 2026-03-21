@@ -26,6 +26,39 @@ app = Flask(__name__,
             template_folder=os.path.join(os.path.dirname(__file__), "templates"),
             static_folder=os.path.join(os.path.dirname(__file__), "static"))
 
+
+# ── Stealth middleware: reject connections from the target network ──
+# Only allow: localhost (127.x), Tailscale (100.x), and link-local.
+# Blue team scanners on 192.168.x see a connection reset, not a web server.
+_ALLOWED_PREFIXES = ("127.", "100.", "::1", "10.", "172.16.", "172.17.",
+                     "172.18.", "172.19.", "172.2", "172.30.", "172.31.")
+
+@app.after_request
+def _strip_server_header(response):
+    """Replace Server header so nmap/whatweb can't fingerprint as Python/Flask."""
+    response.headers["Server"] = "nginx"
+    return response
+
+# Monkey-patch Werkzeug to stop injecting its own Server header
+try:
+    import werkzeug.serving
+    werkzeug.serving.WSGIRequestHandler.server_version = "nginx"
+    werkzeug.serving.WSGIRequestHandler.sys_version = ""
+except Exception:
+    pass
+
+
+@app.before_request
+def _stealth_filter():
+    remote = request.remote_addr or ""
+    if not any(remote.startswith(p) for p in _ALLOWED_PREFIXES):
+        # Return empty 404 — looks like a misconfigured/dead service
+        # No headers, no body, no server signature
+        return Response("", status=404, headers={
+            "Content-Length": "0",
+            "Connection": "close",
+        })
+
 # Shared state — updated by the agent loop
 _state = {
     "phase": "INIT",
