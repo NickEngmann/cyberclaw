@@ -70,7 +70,8 @@ def init_db(log_dir: str):
             vuln TEXT,
             severity TEXT DEFAULT 'medium',
             network TEXT DEFAULT '',
-            timestamp TEXT
+            timestamp TEXT,
+            chain TEXT DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS timeline (
@@ -358,12 +359,6 @@ def add_vulnerability(host: str, service: str, vuln: str,
                       chain: str = ""):
     """Add a vulnerability. `chain` is the exploit path (commands that found it)."""
     conn = _get_conn()
-    # Add chain column if it doesn't exist (migration)
-    try:
-        conn.execute("ALTER TABLE vulnerabilities ADD COLUMN chain TEXT DEFAULT ''")
-        conn.commit()
-    except Exception:
-        pass  # column already exists
     # Dedup: don't add same vuln for same host
     existing = conn.execute(
         "SELECT id FROM vulnerabilities WHERE host=? AND vuln=?",
