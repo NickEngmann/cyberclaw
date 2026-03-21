@@ -191,12 +191,23 @@ def api_state():
     state["vulns"] = db_vulns
     state["wifi_up"] = disk_findings.get("wifi_connected", False)
 
-    # Use disk feed if in-memory is empty
-    if not state.get("feed") and feed:
-        state["feed"] = feed[-200:]
-    elif feed:
-        # Merge: use whichever has more entries
-        if len(feed) > len(state.get("feed", [])):
+    # Read live feed from SQLite (written by agent's ui_bridge)
+    try:
+        _agent_feed = []
+        if os.path.exists(_dbpath):
+            _fconn = _sql.connect(_dbpath)
+            _frow = _fconn.execute(
+                "SELECT value FROM state WHERE key='agent_feed'").fetchone()
+            if _frow:
+                _agent_feed = json.loads(_frow[0])
+            _fconn.close()
+        # Use agent feed if available, fall back to disk timeline
+        if _agent_feed:
+            state["feed"] = _agent_feed[-200:]
+        elif feed:
+            state["feed"] = feed[-200:]
+    except Exception:
+        if feed:
             state["feed"] = feed[-200:]
 
     # Infer phase from disk

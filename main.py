@@ -129,18 +129,35 @@ async def main():
             {"name": "Thor", "status": "SKIP", "detail": "disabled"}
         )
 
-    # Start Web UI
+    # Web UI runs as separate daemon (webui-daemon.sh), not in agent process.
+    # Agent communicates state via SQLite (agent/ui_bridge.py).
     webui_port = config.get("webui", {}).get("port", 8888)
-    services.append(
-        {"name": "Web UI", "status": "OK", "detail": f":{webui_port}"}
-    )
+    # Check if webui daemon is already running
+    import subprocess as _sp
+    webui_up = False
+    try:
+        _r = _sp.run(["ss", "-tlnp"], capture_output=True, text=True, timeout=3)
+        webui_up = f":{webui_port}" in _r.stdout
+    except Exception:
+        pass
+    if webui_up:
+        services.append(
+            {"name": "Web UI", "status": "OK", "detail": f":{webui_port} (daemon)"}
+        )
+    else:
+        # Auto-start the daemon
+        try:
+            _sp.Popen(["bash", "scripts/webui-daemon.sh", "start"],
+                       stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+            services.append(
+                {"name": "Web UI", "status": "OK", "detail": f":{webui_port} (starting)"}
+            )
+        except Exception:
+            services.append(
+                {"name": "Web UI", "status": "SKIP", "detail": "daemon not started"}
+            )
 
     ui.render_boot_sequence(services)
-
-    from webui.server import run_webui, get_tailscale_ip
-    webui_host = get_tailscale_ip()
-    run_webui(port=webui_port, host=webui_host)
-    print(f"  {C.GREEN}[INIT]{C.RESET} Web UI running on http://{webui_host}:{webui_port} (Tailscale only)")
 
     # Initialize components
     llm = LLMClient(config["model"])

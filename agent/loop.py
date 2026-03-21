@@ -15,7 +15,7 @@ from agent import host_memory
 from agent import training_capture
 
 try:
-    from webui.server import update_state, push_feed
+    from agent.ui_bridge import update_state, push_feed
 except ImportError:
     def update_state(u): pass
     def push_feed(t, c): pass
